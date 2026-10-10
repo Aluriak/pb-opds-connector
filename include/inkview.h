@@ -21,7 +21,7 @@
 #include <sys/sysinfo.h>
 #include <signal.h>
 #include <errno.h>
-#include <zlib.h>
+//#include <zlib.h>
 #include <pthread.h>
 #include <stdbool.h>
 

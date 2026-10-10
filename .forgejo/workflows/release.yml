@@ -1,0 +1,101 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  schedule:
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+
+env:
+  ZIG_VERSION: 0.17.0-dev.2267+48abf1a34
+
+jobs:
+  release:
+    runs-on: codeberg-small
+    steps:
+      - name: Check out the code
+        uses: https://code.forgejo.org/actions/checkout@v7
+
+      - name: Decide what to build
+        id: meta
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            {
+              echo "tag=${GITHUB_REF_NAME}"
+              echo "version=${GITHUB_REF_NAME}"
+              echo "nightly=false"
+              echo "build=true"
+            } >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Nightly. Skip the scheduled run if the last nightly was built from this very commit
+          build=true
+          if [ "${GITHUB_EVENT_NAME}" = "schedule" ] && git ls-remote origin 'refs/tags/nightly*' | grep -q "^${GITHUB_SHA}"; then
+            echo "main has not changed since the last nightly, nothing to do"
+            build=false
+          fi
+          {
+            echo "tag=nightly"
+            echo "version=nightly-$(date -u +%Y%m%d)-$(echo "${GITHUB_SHA}" | cut -c1-7)"
+            echo "nightly=true"
+            echo "build=${build}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Install Zig
+        if: steps.meta.outputs.build == 'true'
+        run: |
+          case "$ZIG_VERSION" in
+            *-dev.*) base="https://ziglang.org/builds" ;;
+            *) base="https://ziglang.org/download/${ZIG_VERSION}" ;;
+          esac
+          curl -fsSL "${base}/zig-$(uname -m)-linux-${ZIG_VERSION}.tar.xz" -o /tmp/zig.tar.xz
+          mkdir -p /opt/zig
+          tar -xJf /tmp/zig.tar.xz -C /opt/zig --strip-components=1
+          rm /tmp/zig.tar.xz
+          ln -sf /opt/zig/zig /usr/local/bin/zig
+          zig version
+
+      - name: Check formatting
+        if: steps.meta.outputs.build == 'true'
+        run: make fmt-check
+
+      - name: Run the tests
+        if: steps.meta.outputs.build == 'true'
+        run: make test
+
+      - name: Build
+        if: steps.meta.outputs.build == 'true'
+        run: make build-all
+
+      - name: Package
+        if: steps.meta.outputs.build == 'true'
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          mkdir -p dist/release
+          out="$PWD/dist/release"
+          # One archive per platform that was built: zig-out/<platform>/bin
+          for dir in zig-out/*/bin; do
+            platform="$(basename "$(dirname "$dir")")"
+            (cd "$dir" && zip -9 "${out}/opds-connector-${VERSION}-${platform}.zip" "OPDS Connector.app")
+          done
+          (cd dist/release && sha256sum *.zip > SHA256SUMS)
+          ls -la dist/release
+
+      - name: Publish the release
+        if: steps.meta.outputs.build == 'true'
+        uses: https://code.forgejo.org/actions/forgejo-release@v2.13.4
+        with:
+          direction: upload
+          tag: ${{ steps.meta.outputs.tag }}
+          release-dir: dist/release
+          override: ${{ steps.meta.outputs.nightly }}
+          prerelease: ${{ steps.meta.outputs.nightly }}
+          release-notes: |
+            Build ${{ steps.meta.outputs.version }}.
+
+            Unzip and copy `OPDS Connector.app` into the `applications` folder of your PocketBook.
+            See the README for supported devices and firmware versions.
