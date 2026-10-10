@@ -13,7 +13,7 @@ env:
 
 jobs:
   release:
-    runs-on: codeberg-small
+    runs-on: codeberg-medium
     steps:
       - name: Check out the code
         uses: https://code.forgejo.org/actions/checkout@v7
@@ -62,7 +62,7 @@ jobs:
         if: steps.meta.outputs.build == 'true'
         run: make fmt-check
 
-      - name: Run the tests
+      - name: Tests
         if: steps.meta.outputs.build == 'true'
         run: make test
 
@@ -85,7 +85,7 @@ jobs:
           (cd dist/release && sha256sum *.zip > SHA256SUMS)
           ls -la dist/release
 
-      - name: Publish the release
+      - name: Publish
         if: steps.meta.outputs.build == 'true'
         uses: https://code.forgejo.org/actions/forgejo-release@v2.13.4
         with:
