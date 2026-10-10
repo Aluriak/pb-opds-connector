@@ -2,6 +2,8 @@ name: Release
 
 on:
   push:
+    branches:
+      - main
     tags:
       - 'v*'
   schedule:
@@ -21,26 +23,30 @@ jobs:
       - name: Decide what to build
         id: meta
         run: |
+          version="$(sed -n 's/^ *\.version = "\(.*\)",.*/\1/p' build.zig.zon)"
+
           if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
-            {
-              echo "tag=${GITHUB_REF_NAME}"
-              echo "version=${GITHUB_REF_NAME}"
-              echo "nightly=false"
-              echo "build=true"
-            } >> "$GITHUB_OUTPUT"
-            exit 0
+            tag="${GITHUB_REF_NAME}"; label="${GITHUB_REF_NAME}"; nightly=false; build=true
+          elif [ "${GITHUB_EVENT_NAME}" = "push" ]; then
+            # A push to main releases the version from build.zig.zon, unless that version is out already
+            tag="v${version}"; label="v${version}"; nightly=false; build=true
+            if git ls-remote --exit-code origin "refs/tags/${tag}" > /dev/null; then
+              echo "${tag} is already released, nothing to do"
+              build=false
+            fi
+          else
+            # Nightly. Skip the scheduled run if the last nightly was built from this very commit
+            tag=nightly; label="nightly-$(date -u +%Y%m%d)-$(echo "${GITHUB_SHA}" | cut -c1-7)"; nightly=true; build=true
+            if [ "${GITHUB_EVENT_NAME}" = "schedule" ] && git ls-remote origin 'refs/tags/nightly*' | grep -q "^${GITHUB_SHA}"; then
+              echo "main has not changed since the last nightly, nothing to do"
+              build=false
+            fi
           fi
 
-          # Nightly. Skip the scheduled run if the last nightly was built from this very commit
-          build=true
-          if [ "${GITHUB_EVENT_NAME}" = "schedule" ] && git ls-remote origin 'refs/tags/nightly*' | grep -q "^${GITHUB_SHA}"; then
-            echo "main has not changed since the last nightly, nothing to do"
-            build=false
-          fi
           {
-            echo "tag=nightly"
-            echo "version=nightly-$(date -u +%Y%m%d)-$(echo "${GITHUB_SHA}" | cut -c1-7)"
-            echo "nightly=true"
+            echo "tag=${tag}"
+            echo "version=${label}"
+            echo "nightly=${nightly}"
             echo "build=${build}"
           } >> "$GITHUB_OUTPUT"
 

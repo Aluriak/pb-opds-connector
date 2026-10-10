@@ -2,7 +2,7 @@ const builtin = @import("builtin");
 const std = @import("std");
 const curl = @import("libcurl.zig");
 
-const USER_AGENT = "pb-opds-connector/0.1.0";
+const USER_AGENT = "pb-opds-connector/" ++ @import("build_options").version;
 
 /// Called while a download runs, with the bytes received so far and the total
 /// or 0 if the server does not say.

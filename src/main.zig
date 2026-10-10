@@ -19,17 +19,16 @@ const CATALOGS = [_]xml.Entry{
 /// The PocketBook scanner is asked to only re-scan this folder after a download.
 const DOWNLOAD_DIR = "/mnt/ext1/Downloads";
 
-const MAX_AUTHOR_IN_FILENAME = 60;
-const MAX_TITLE_IN_FILENAME = 120;
-/// "<author> - <title>.<ext>" at its longest
-const MAX_FILENAME = MAX_AUTHOR_IN_FILENAME + " - ".len + MAX_TITLE_IN_FILENAME + ".fb2.zip".len;
-
 const Feed = struct {
     /// Owns the entries and all their strings
     arena: std.heap.ArenaAllocator,
     entries: []const xml.Entry,
     /// Selected item, restored when coming back from a sub feed
     pos: c_int = 0,
+    /// Where the catalog continues this list, null once everything is loaded
+    next_url: ?[:0]const u8 = null,
+    /// First entry of the screen the list currently shows
+    top: c_int = 0,
 };
 
 // InkView callbacks carry no user pointer, so the app state lives here
@@ -46,6 +45,8 @@ var author_font: ?*pb.ifont = null;
 var menu_items: [xml.MAX_DOWNLOADS + 2]pb.imenu = undefined;
 var menu_texts: [xml.MAX_DOWNLOADS][160]u8 = undefined;
 var menu_entry: xml.Entry = .{};
+/// Set while the next page of a list is waiting to be loaded
+var more_pending = false;
 
 /// "Step" means a tenth of the file (or a megabyte, when the server doesn't give the size).
 /// So the variable is what turns thousands of progress calls into about ten screen updates per download,
@@ -98,6 +99,7 @@ fn listHandler(action: c_int, x: c_int, y: c_int, idx: c_int, state: c_int) call
     const feed = &feeds.items[feeds.items.len - 1];
 
     switch (action) {
+        pb.LIST_BEGINPAINT => feed.top = idx,
         pb.LIST_PAINT => {
             if (idx < 0 or idx >= feed.entries.len) return 0;
             const entry = feed.entries[@intCast(idx)];
@@ -111,11 +113,19 @@ fn listHandler(action: c_int, x: c_int, y: c_int, idx: c_int, state: c_int) call
             _ = pb.DrawTextRect(x + padding, y + padding, text_width, line_height, entry.title.ptr, flags);
             pb.SetFont(author_font, pb.DGRAY);
             var detail_buf: [256]u8 = undefined;
-            const detail = entryDetail(&detail_buf, entry);
+            const detail = entry.detail(&detail_buf);
             _ = pb.DrawTextRect(x + padding, y + padding + line_height, text_width, line_height, detail.ptr, flags);
 
             pb.DrawLine(x, y + item_height - 1, x + width, y + item_height - 1, pb.LGRAY);
             if (state != 0) pb.DrawSelection(x, y, width, item_height, pb.BLACK);
+
+            // The last loaded entry is on screen: get the next page before the user runs out
+            if (idx == feed.entries.len - 1 and feed.next_url != null and !more_pending) {
+                more_pending = true;
+                // Not from inside the painting, InkView has to finish this screen first.
+                // The cast is needed because the C header declares timer functions without a parameter list
+                pb.SetWeakTimer("opds-more", @ptrCast(&loadMoreTimer), 100);
+            }
         },
         pb.LIST_OPEN => {
             if (idx < 0 or idx >= feed.entries.len) return 0;
@@ -186,57 +196,11 @@ fn loadFeed(url: [:0]const u8) !void {
     var arena = std.heap.ArenaAllocator.init(gpa);
     errdefer arena.deinit();
 
-    const entries = try xml.parseOPDSFeed(arena.allocator(), body, url);
-    trace("parsed {d} entries\n", .{entries.len});
-    if (entries.len == 0) return error.EmptyFeed;
+    const parsed = try xml.parseOPDSFeed(arena.allocator(), body, url);
+    trace("parsed {d} entries, next={?s}\n", .{ parsed.entries.len, parsed.next_url });
+    if (parsed.entries.len == 0) return error.EmptyFeed;
 
-    try feeds.append(gpa, .{ .arena = arena, .entries = entries });
-}
-
-/// Second line of a row: the author, for book files followed by the formats on offer
-fn entryDetail(buf: []u8, entry: xml.Entry) [:0]const u8 {
-    if (entry.downloads.len == 0) return if (entry.author.len > 0) entry.author else entry.summary;
-
-    // Leave room for the terminating zero
-    const room = buf.len - 1;
-    var len: usize = 0;
-    if (std.fmt.bufPrint(buf[0..room], "{s}", .{entry.author})) |part| {
-        len += part.len;
-    } else |_| {}
-
-    var formats: usize = 0;
-    for (entry.downloads, 0..) |download, i| {
-        // Several downloads of the same format are one format to the user
-        const seen = for (entry.downloads[0..i]) |earlier| {
-            if (earlier.format == download.format) break true;
-        } else false;
-        if (seen) continue;
-
-        var format_buf: [16]u8 = undefined;
-        const format = std.ascii.upperString(&format_buf, download.format.extension());
-
-        const separator = if (formats > 0) ", " else if (len > 0) " - " else "";
-        const part = std.fmt.bufPrint(buf[len..room], "{s}{s}", .{ separator, format }) catch break;
-        len += part.len;
-        formats += 1;
-    }
-    buf[len] = 0;
-    return buf[0..len :0];
-}
-
-/// Name and size of a download, e.g. "EPUB (no images), 0.5 MB". A download the catalog
-/// gives no name is called after its format, e.g. "FB2.ZIP".
-fn downloadText(buf: []u8, download: xml.Download) [:0]const u8 {
-    var format_buf: [16]u8 = undefined;
-    const name = if (download.label.len > 0)
-        download.label
-    else
-        std.ascii.upperString(&format_buf, download.format.extension());
-
-    if (download.size == 0) return std.fmt.bufPrintSentinel(buf, "{s}", .{name}, 0) catch "Download";
-
-    const tenths_of_mb = download.size * 10 / (1024 * 1024);
-    return std.fmt.bufPrintSentinel(buf, "{s}, {d}.{d} MB", .{ name, tenths_of_mb / 10, tenths_of_mb % 10 }, 0) catch "Download";
+    try feeds.append(gpa, .{ .arena = arena, .entries = parsed.entries, .next_url = parsed.next_url });
 }
 
 /// Lets the user pick one of several formats of the same book
@@ -245,7 +209,7 @@ fn openDownloadMenu(entry: xml.Entry) void {
 
     menu_items[0] = .{ .type = pb.ITEM_HEADER, .index = 0, .text = @constCast("Download"), .submenu = null };
     for (entry.downloads, 0..) |download, i| {
-        const text = downloadText(&menu_texts[i], download);
+        const text = download.description(&menu_texts[i]);
         menu_items[i + 1] = .{ .type = pb.ITEM_ACTIVE, .index = @intCast(i + 1), .text = @constCast(text.ptr), .submenu = null };
     }
     // A zeroed item ends the menu
@@ -269,15 +233,53 @@ fn onDownloadProgress(downloaded: u64, total: u64) void {
     progressStep = step;
 
     var buf: [64]u8 = undefined;
-    const tenths_of_mb = downloaded * 10 / (1024 * 1024);
-    const text = std.fmt.bufPrintSentinel(&buf, "{d}.{d} MB", .{ tenths_of_mb / 10, tenths_of_mb % 10 }, 0) catch return;
+    var size_buf: [16]u8 = undefined;
+    const text = std.fmt.bufPrintSentinel(&buf, "{s}", .{utils.formatSize(&size_buf, downloaded)}, 0) catch return;
     const percent: c_int = if (total > 0) @intCast(@min(100, downloaded * 100 / total)) else 0;
     _ = pb.UpdateProgressbar(text.ptr, percent);
 }
 
+/// Called by InkView shortly after the last loaded entry was painted
+fn loadMoreTimer() callconv(.c) void {
+    more_pending = false;
+    if (feeds.items.len == 0) return;
+    const feed = &feeds.items[feeds.items.len - 1];
+
+    loadMore(feed) catch |err| {
+        trace("loadMore failed: {s}\n", .{@errorName(err)});
+        // Do not try again on every repaint
+        feed.next_url = null;
+        utils.showError(pb, APP_TITLE, "Could not load more entries", err);
+    };
+}
+
+/// Appends the next page of the catalog to the list on screen
+fn loadMore(feed: *Feed) !void {
+    const url = feed.next_url orelse return;
+    trace("loadMore {s}\n", .{url});
+    if (!ensureNetwork()) return error.NoNetwork;
+
+    pb.ShowHourglass();
+    defer pb.HideHourglass();
+
+    const body = try net.fetch(gpa, url);
+    defer gpa.free(body);
+
+    // Into the arena of the list, the new entries live as long as the old ones
+    const allocator = feed.arena.allocator();
+    const parsed = try xml.parseOPDSFeed(allocator, body, url);
+    trace("loaded {d} more entries, next={?s}\n", .{ parsed.entries.len, parsed.next_url });
+
+    feed.entries = try std.mem.concat(allocator, xml.Entry, &.{ feed.entries, parsed.entries });
+    feed.next_url = if (parsed.entries.len == 0) null else parsed.next_url;
+
+    // Show the same screen again, now with more behind it
+    pb.OpenList(APP_TITLE, null, pb.ScreenWidth(), item_height, @intCast(feed.entries.len), feed.top, listHandler);
+}
+
 fn downloadBook(entry: xml.Entry, download: xml.Download) void {
-    var name_buf: [MAX_FILENAME]u8 = undefined;
-    const filename = bookFilename(&name_buf, entry, download.format);
+    var name_buf: [xml.MAX_FILENAME]u8 = undefined;
+    const filename = entry.saveName(&name_buf, download.format);
 
     if (!ensureNetwork()) {
         utils.showError(pb, APP_TITLE, "Could not download the book", error.NoNetwork);
@@ -310,26 +312,6 @@ fn rescanLibrary() void {
     var request = ("-scan:" ++ DOWNLOAD_DIR).*;
     const result = pb.SendRequestTo(task, pb.REQ_OPENBOOK, &request, request.len + 1, 0, 2000);
     trace("scan request result={d}\n", .{result});
-}
-
-/// Builds "<author> - <title>.<ext>". Hrefs often end in ids like /get/epub/12, so they make bad file names.
-fn bookFilename(buf: *[MAX_FILENAME]u8, entry: xml.Entry, format: xml.BookFormat) []const u8 {
-    var len = utils.cleanName(buf[0..MAX_AUTHOR_IN_FILENAME], entry.author, true);
-    if (len > 0) {
-        @memcpy(buf[len..][0..3], " - ");
-        len += 3;
-    }
-
-    const title_len = utils.cleanName(buf[len..][0..MAX_TITLE_IN_FILENAME], entry.title, false);
-    if (title_len > 0) {
-        len += title_len;
-    } else {
-        @memcpy(buf[len..][0..4], "book");
-        len += 4;
-    }
-
-    const ext = std.fmt.bufPrint(buf[len..], ".{s}", .{format.extension()}) catch unreachable;
-    return buf[0 .. len + ext.len];
 }
 
 fn ensureNetwork() bool {

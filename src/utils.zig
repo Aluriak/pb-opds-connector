@@ -40,6 +40,22 @@ pub fn showError(comptime pb: type, title: [*:0]const u8, text: []const u8, err:
     pb.Message(pb.ICON_ERROR, title, msg.ptr, 5000);
 }
 
+/// A file size for display: whole kilobytes below one megabyte ("547 KB"),
+/// megabytes with one decimal from there on ("23.6 MB"). Sizes are rounded down.
+pub fn formatSize(buf: []u8, bytes: u64) []const u8 {
+    const megabyte = 1024 * 1024;
+
+    if (bytes < megabyte) {
+        // A file that is not empty counts as at least 1 KB
+        const kilobytes = if (bytes == 0) 0 else @max(1, bytes / 1024);
+        return std.fmt.bufPrint(buf, "{d} KB", .{kilobytes}) catch "";
+    }
+
+    const tenths = bytes * 10 / megabyte;
+    return std.fmt.bufPrint(buf, "{d}.{d} MB", .{ tenths / 10, tenths % 10 }) catch "";
+}
+
+/// TEST
 /// Runs cleanName with a buffer of `capacity` bytes and compares the result
 fn expectClean(expected: []const u8, text: []const u8, is_author: bool, comptime capacity: usize) !void {
     var buf: [capacity]u8 = undefined;
@@ -88,4 +104,27 @@ test "never cuts inside a multi-byte character" {
     try expectClean("abЯ", "abЯЯ", false, 5);
     // "€" takes three bytes and would end at six
     try expectClean("abc", "abc€", false, 5);
+}
+
+fn expectSize(expected: []const u8, bytes: u64) !void {
+    var buf: [16]u8 = undefined;
+    try std.testing.expectEqualStrings(expected, formatSize(&buf, bytes));
+}
+
+test "formatSize shows small files in kilobytes" {
+    try expectSize("100 KB", 100 * 1024);
+    try expectSize("547 KB", 561102);
+    try expectSize("1023 KB", 1024 * 1024 - 1);
+}
+
+test "formatSize shows at least 1 KB for a file that is not empty" {
+    try expectSize("0 KB", 0);
+    try expectSize("1 KB", 1);
+    try expectSize("1 KB", 1023);
+}
+
+test "formatSize shows megabytes with one decimal from 1 MB on" {
+    try expectSize("1.0 MB", 1024 * 1024);
+    try expectSize("1.9 MB", 2 * 1024 * 1024 - 1);
+    try expectSize("23.6 MB", 24836548);
 }

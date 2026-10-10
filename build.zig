@@ -6,6 +6,9 @@ const std = @import("std");
 ///   - Task switcher
 const APP_NAME = "OPDS Connector";
 
+/// The version of the app. Needed for the User-Agent
+const VERSION = @import("build.zig.zon").version;
+
 /// PocketBook's hardware families run the same firmware but differ in how their system
 /// libraries pass floating point values, and a binary only loads on the matching kind.
 const Platform = enum {
@@ -54,6 +57,7 @@ pub fn build(b: *std.Build) void {
 
     const options = b.addOptions();
     options.addOption([:0]const u8, "appName", APP_NAME);
+    options.addOption([]const u8, "version", VERSION);
     exe.root_module.addOptions("build_options", options);
 
     exe.root_module.addImport("c", translate_c.createModule());
@@ -67,10 +71,11 @@ pub fn build(b: *std.Build) void {
 
     const tests = b.addTest(.{
         .root_module = b.createModule(.{
-            .root_source_file = b.path("src/utils.zig"),
+            .root_source_file = b.path("src/xml.zig"),
             .target = b.graph.host,
         }),
     });
+    tests.root_module.addImport("xml", b.dependency("xml", .{}).module("xml"));
     b.step("test", "Run the unit tests").dependOn(&b.addRunArtifact(tests).step);
 }
 
