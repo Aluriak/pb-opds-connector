@@ -2,7 +2,6 @@ const builtin = @import("builtin");
 const std = @import("std");
 const pb = @import("c");
 
-/// Connects to the network if the reader is not connected yet. False if that did not work.
 pub fn ensureNetwork() bool {
     if (pb.QueryNetwork() & pb.NET_CONNECTED != 0) return true;
 
@@ -32,8 +31,8 @@ pub fn trace(comptime fmt: []const u8, args: anytype) void {
     _ = std.c.write(2, msg.ptr, msg.len);
 }
 
-/// InkView has to finish closing one keyboard or dialog before the next one opens,
-/// so every following step starts from a short timer
+/// Runs `step` a moment later instead of right now, mainly used for InkView tasks.
+/// InkView should finish the first task, wait some milliseconds and then continue.
 pub fn later(step: *const fn () callconv(.c) void) void {
     pb.SetWeakTimer("opds-step", @ptrCast(step), 100);
 }
