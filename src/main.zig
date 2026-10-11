@@ -1,7 +1,5 @@
 const std = @import("std");
-
 const net = @import("net.zig");
-const utils = @import("utils.zig");
 const xml = @import("xml.zig");
 const server_form = @import("server_form.zig");
 const download = @import("download.zig");
@@ -23,7 +21,6 @@ const CATALOGS = [_]xml.Entry{
 };
 
 const Feed = struct {
-    /// Owns the entries and all their strings
     arena: std.heap.ArenaAllocator,
     entries: []const xml.Entry,
     /// Selected item, restored when coming back from a sub feed
@@ -48,8 +45,12 @@ const Feed = struct {
     }
 };
 
-// InkView callbacks carry no user pointer, so the app state lives here
+/// InkView callbacks carry no user pointer, so the app state lives here
 var gpa: std.mem.Allocator = undefined;
+
+/// The app's navigation history: a stack of the list openend, one Feed per level
+/// Whenever a new view is opened, it is pushed into this stack. Going back
+/// is just a matter of popping out the top most view.
 var feeds: std.ArrayList(Feed) = .empty;
 var started = false;
 
@@ -164,7 +165,7 @@ fn listHandler(action: c_int, x: c_int, y: c_int, idx: c_int, state: c_int) call
                         // Necessarry, as we otherwise would overwrite the previously entred data.
                         server_index = null;
                         if (!server_form.open(gpa, null, serverEntered)) {
-                            utils.showError(pb, APP_TITLE, "Could not open the form", error.NoSettingsFile);
+                            pocketbook.showError("Could not open the form", error.NoSettingsFile);
                         }
                         return 1;
                     },
@@ -188,9 +189,22 @@ fn listHandler(action: c_int, x: c_int, y: c_int, idx: c_int, state: c_int) call
             if (catalogRow(@intCast(idx)) != .custom) return 0;
             openServerMenu(@as(usize, @intCast(idx)) - CATALOGS.len);
         },
+        // Handle the "back" action of a user, f. ex. clicking the _back_ button.
+        // This can lead to the previous screen or closing the app.
         pb.LIST_EXIT => {
             _ = pb.SetEventHandler(mainHandler);
-            goBack();
+
+            var closed = feeds.pop() orelse return 1;
+            closed.arena.deinit();
+
+            // Close the app, if there is no feed left to display
+            if (feeds.items.len == 0) {
+                pb.CloseApp();
+                return 1;
+            }
+
+            // Show the previous screen
+            showList();
         },
         else => return 0,
     }
@@ -201,18 +215,6 @@ fn listHandler(action: c_int, x: c_int, y: c_int, idx: c_int, state: c_int) call
 fn showList() void {
     const feed = &feeds.items[feeds.items.len - 1];
     pb.OpenList(APP_TITLE, null, pb.ScreenWidth(), item_height, @intCast(feed.entries.len), feed.pos, listHandler);
-}
-
-fn goBack() void {
-    var feed = feeds.pop() orelse return;
-    feed.arena.deinit();
-
-    if (feeds.items.len == 0) {
-        pb.CloseApp();
-        return;
-    }
-
-    showList();
 }
 
 const CatalogRow = union(enum) { builtin, custom: Server, add };
@@ -258,7 +260,7 @@ fn serverMenuHandler(index: c_int) callconv(.c) void {
     switch (index) {
         1 => {
             if (!server_form.open(gpa, custom_servers.items[selected], serverEntered)) {
-                utils.showError(pb, APP_TITLE, "Could not open the form", error.NoSettingsFile);
+                pocketbook.showError("Could not open the form", error.NoSettingsFile);
             }
         },
         2 => {
@@ -273,7 +275,7 @@ fn serverMenuHandler(index: c_int) callconv(.c) void {
 
 /// Called when the "Add server" form was left
 fn serverEntered(server: anyerror!?Server) void {
-    saveServer(server) catch |err| utils.showError(pb, APP_TITLE, "Could not save the server", err);
+    saveServer(server) catch |err| pocketbook.showError("Could not save the server", err);
     showList();
 }
 
@@ -313,7 +315,7 @@ fn openFeed(url: [:0]const u8) void {
 
     loadFeed(url) catch |err| {
         trace("loadFeed failed: {s}\n", .{@errorName(err)});
-        utils.showError(pb, APP_TITLE, "Could not open the catalog", err);
+        pocketbook.showError("Could not open the catalog", err);
         return;
     };
 
@@ -357,7 +359,7 @@ fn loadMoreTimer() callconv(.c) void {
         trace("loadMore failed: {s}\n", .{@errorName(err)});
         // Do not try again on every repaint
         feed.next_url = null;
-        utils.showError(pb, APP_TITLE, "Could not load more entries", err);
+        pocketbook.showError("Could not load more entries", err);
         return;
     };
     pb.OpenList(APP_TITLE, null, pb.ScreenWidth(), item_height, @intCast(feed.entries.len), feed.top, listHandler);

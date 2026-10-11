@@ -61,7 +61,7 @@ fn downloadBook(entry: xml.Entry, download: xml.Download) void {
     const filename = entry.saveName(&name_buf, download.format);
 
     if (!pocketbook.ensureNetwork()) {
-        utils.showError(pb, APP_TITLE, "Could not download the book", error.NoNetwork);
+        pocketbook.showError("Could not download the book", error.NoNetwork);
         return;
     }
 
@@ -69,7 +69,7 @@ fn downloadBook(entry: xml.Entry, download: xml.Download) void {
     pb.OpenProgressbar(pb.ICON_INFORMATION, "Downloading", entry.title.ptr, 0, null);
     net.download(download.url, DOWNLOAD_DIR, filename, onProgress) catch |err| {
         pb.CloseProgressbar();
-        utils.showError(pb, APP_TITLE, "Could not download the book", err);
+        pocketbook.showError("Could not download the book", err);
         return;
     };
     pb.CloseProgressbar();

@@ -33,13 +33,6 @@ pub fn cleanName(out: []u8, text: []const u8, is_author: bool) usize {
     return len;
 }
 
-/// Shows an error dialog with the correct PocketBook styling.
-pub fn showError(comptime pb: type, title: [*:0]const u8, text: []const u8, err: anyerror) void {
-    var buf: [256]u8 = undefined;
-    const msg = std.fmt.bufPrintSentinel(&buf, "{s} ({s})", .{ text, @errorName(err) }, 0) catch "Error";
-    pb.Message(pb.ICON_ERROR, title, msg.ptr, 5000);
-}
-
 /// A file size for display: whole kilobytes below one megabyte ("547 KB"),
 /// megabytes with one decimal from there on ("23.6 MB"). Sizes are rounded down.
 pub fn formatSize(buf: []u8, bytes: u64) []const u8 {
