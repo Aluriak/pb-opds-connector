@@ -6,7 +6,7 @@ An OPDS connector for PocketBook e-readers. Browse catalogs and download books s
 
 * **Native PocketBook integration:** Built on PocketBook's own SDK, so it looks and behaves like the reader's built-in apps.
 * **Browsing OPDS catalogs:**
-  * Calibre and custom endpoints (coming soon)
+  * Calibre and custom endpoints
   * Browse a default set of OPDS catalogs
     * Flibusta
     * ManyBooks

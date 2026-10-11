@@ -1,8 +1,14 @@
-const builtin = @import("builtin");
 const std = @import("std");
+
 const net = @import("net.zig");
 const utils = @import("utils.zig");
 const xml = @import("xml.zig");
+const server_form = @import("server_form.zig");
+const pocketbook = @import("pocketbook.zig");
+const trace = pocketbook.trace;
+
+const configuration = @import("configuration.zig");
+const Server = @import("server.zig").Server;
 
 const pb = @import("c");
 
@@ -29,6 +35,20 @@ const Feed = struct {
     next_url: ?[:0]const u8 = null,
     /// First entry of the screen the list currently shows
     top: c_int = 0,
+
+    /// Appends the next page of the catalog to the entries
+    fn loadMore(feed: *Feed) !void {
+        const url = feed.next_url orelse return;
+
+        const body = try net.fetch(gpa, url);
+        defer gpa.free(body);
+
+        const allocator = feed.arena.allocator();
+        const parsed = try xml.parseOPDSFeed(allocator, body, url);
+
+        feed.entries = try std.mem.concat(allocator, xml.Entry, &.{ feed.entries, parsed.entries });
+        feed.next_url = if (parsed.entries.len == 0) null else parsed.next_url;
+    }
 };
 
 // InkView callbacks carry no user pointer, so the app state lives here
@@ -45,6 +65,13 @@ var author_font: ?*pb.ifont = null;
 var menu_items: [xml.MAX_DOWNLOADS + 2]pb.imenu = undefined;
 var menu_texts: [xml.MAX_DOWNLOADS][160]u8 = undefined;
 var menu_entry: xml.Entry = .{};
+/// Servers the user added, shown after the built-in catalogs
+var custom_servers: std.ArrayList(Server) = .empty;
+/// Rows of the start screen: built-in catalogs, custom servers, and the "Add server" row
+var catalog_rows: std.ArrayList(xml.Entry) = .empty;
+/// The custom server a delete question is open for
+var server_index: ?usize = null;
+var delete_text: [128]u8 = undefined;
 /// Set while the next page of a list is waiting to be loaded
 var more_pending = false;
 
@@ -69,8 +96,16 @@ fn mainHandler(event_type: c_int, par1: c_int, par2: c_int) callconv(.c) c_int {
             if (started) return 0;
             started = true;
 
+            if (configuration.load(gpa)) |saved| {
+                custom_servers = .fromOwnedSlice(saved);
+            } else |err| trace("loading servers failed: {s}\n", .{@errorName(err)});
+
             // The catalog list is the bottom of the feed stack, so Back from a catalog returns here
-            feeds.append(gpa, .{ .arena = .init(gpa), .entries = &CATALOGS }) catch {
+            feeds.append(gpa, .{ .arena = .init(gpa), .entries = &.{} }) catch {
+                pb.CloseApp();
+                return 0;
+            };
+            rebuildCatalogRows() catch {
                 pb.CloseApp();
                 return 0;
             };
@@ -124,13 +159,28 @@ fn listHandler(action: c_int, x: c_int, y: c_int, idx: c_int, state: c_int) call
                 more_pending = true;
                 // Not from inside the painting, InkView has to finish this screen first.
                 // The cast is needed because the C header declares timer functions without a parameter list
-                pb.SetWeakTimer("opds-more", @ptrCast(&loadMoreTimer), 100);
+                pocketbook.later(loadMoreTimer);
             }
         },
         pb.LIST_OPEN => {
             if (idx < 0 or idx >= feed.entries.len) return 0;
             feed.pos = idx;
             const entry = feed.entries[@intCast(idx)];
+
+            if (feeds.items.len == 1) {
+                switch (catalogRow(@intCast(idx))) {
+                    .add => {
+                        // Necessarry, as we otherwise would overwrite the previously entred data.
+                        server_index = null;
+                        if (!server_form.open(gpa, null, serverEntered)) {
+                            utils.showError(pb, APP_TITLE, "Could not open the form", error.NoSettingsFile);
+                        }
+                        return 1;
+                    },
+                    .custom => |server| net.useServer(server),
+                    .builtin => net.useServer(null),
+                }
+            }
 
             if (entry.downloads.len == 1) {
                 downloadBook(entry, entry.downloads[0]);
@@ -142,6 +192,12 @@ fn listHandler(action: c_int, x: c_int, y: c_int, idx: c_int, state: c_int) call
             } else {
                 pb.Message(pb.ICON_INFORMATION, APP_TITLE, "Nothing to open for this entry.", 3000);
             }
+        },
+        pb.LIST_MENU => {
+            // Long press or menu key: custom servers can be deleted
+            if (feeds.items.len != 1 or idx < 0 or idx >= feed.entries.len) return 0;
+            if (catalogRow(@intCast(idx)) != .custom) return 0;
+            openServerMenu(@as(usize, @intCast(idx)) - CATALOGS.len);
         },
         pb.LIST_EXIT => {
             _ = pb.SetEventHandler(mainHandler);
@@ -170,6 +226,105 @@ fn goBack() void {
     showList();
 }
 
+const CatalogRow = union(enum) { builtin, custom: Server, add };
+
+/// What a row of the start screen is. The order is the one rebuildCatalogRows puts them in.
+fn catalogRow(row: usize) CatalogRow {
+    if (row < CATALOGS.len) return .builtin;
+    if (row < CATALOGS.len + custom_servers.items.len) return .{ .custom = custom_servers.items[row - CATALOGS.len] };
+    return .add;
+}
+
+/// Puts the start screen together again after servers were loaded, added or deleted
+fn rebuildCatalogRows() !void {
+    catalog_rows.clearRetainingCapacity();
+    try catalog_rows.appendSlice(gpa, &CATALOGS);
+    for (custom_servers.items) |server| {
+        try catalog_rows.append(gpa, .{ .title = server.name, .author = server.url, .nav_url = server.url });
+    }
+    try catalog_rows.append(gpa, .{ .title = "+ Add server", .summary = "Calibre or another OPDS server" });
+
+    const start_screen = &feeds.items[0];
+    start_screen.entries = catalog_rows.items;
+    start_screen.pos = @min(start_screen.pos, @as(c_int, @intCast(catalog_rows.items.len - 1)));
+}
+
+/// Lets the user pick what to do with a server they added
+fn openServerMenu(index: usize) void {
+    server_index = index;
+
+    menu_items[0] = .{ .type = pb.ITEM_HEADER, .index = 0, .text = @constCast(custom_servers.items[index].name.ptr), .submenu = null };
+    menu_items[1] = .{ .type = pb.ITEM_ACTIVE, .index = 1, .text = @constCast("Edit"), .submenu = null };
+    menu_items[2] = .{ .type = pb.ITEM_ACTIVE, .index = 2, .text = @constCast("Delete"), .submenu = null };
+    // A zeroed item ends the menu
+    menu_items[3] = .{ .type = 0, .index = 0, .text = null, .submenu = null };
+
+    pb.OpenMenu(&menu_items, 1, @divTrunc(pb.ScreenWidth(), 8), @divTrunc(pb.ScreenHeight(), 3), serverMenuHandler);
+}
+
+fn serverMenuHandler(index: c_int) callconv(.c) void {
+    trace("server menu index={d}\n", .{index});
+    const selected = server_index orelse return;
+
+    switch (index) {
+        1 => {
+            if (!server_form.open(gpa, custom_servers.items[selected], serverEntered)) {
+                utils.showError(pb, APP_TITLE, "Could not open the form", error.NoSettingsFile);
+            }
+        },
+        2 => askDeleteServer(selected),
+        // Anything else means the menu was closed without a choice
+        else => {},
+    }
+}
+
+/// Called when the "Add server" form was left
+fn serverEntered(server: anyerror!?Server) void {
+    trace("form closed\n", .{});
+    saveServer(server) catch |err| utils.showError(pb, APP_TITLE, "Could not save the server", err);
+    pocketbook.later(showListLater);
+}
+
+fn saveServer(entered: anyerror!?Server) !void {
+    // No server means the form was left without a name or an address
+    const server = (try entered) orelse return;
+    trace("save server [{s}] {s} user=[{s}]\n", .{ server.name, server.url, server.user });
+
+    if (server_index) |index| {
+        custom_servers.items[index].free(gpa);
+        custom_servers.items[index] = server;
+        // The network layer may still point to the strings just released
+        net.useServer(null);
+    } else {
+        errdefer server.free(gpa);
+        try custom_servers.append(gpa, server);
+    }
+    configuration.store(custom_servers.items);
+    try rebuildCatalogRows();
+}
+
+fn askDeleteServer(index: usize) void {
+    const text = std.fmt.bufPrintSentinel(&delete_text, "Delete the server \"{s}\"?", .{custom_servers.items[index].name}, 0) catch "Delete this server?";
+    pb.Dialog(pb.ICON_QUESTION, APP_TITLE, text.ptr, "Delete", "Cancel", deleteAnswered);
+}
+
+/// Called by InkView with the number of the button that was pressed
+fn deleteAnswered(button: c_int) callconv(.c) void {
+    trace("delete server answer={d}\n", .{button});
+    const index = server_index orelse return;
+    if (button != 1 or index >= custom_servers.items.len) return;
+
+    custom_servers.orderedRemove(index).free(gpa);
+    net.useServer(null);
+    configuration.store(custom_servers.items);
+    rebuildCatalogRows() catch return;
+    pocketbook.later(showListLater);
+}
+
+fn showListLater() callconv(.c) void {
+    showList();
+}
+
 fn openFeed(url: [:0]const u8) void {
     trace("openFeed {s}\n", .{url});
 
@@ -183,7 +338,7 @@ fn openFeed(url: [:0]const u8) void {
 }
 
 fn loadFeed(url: [:0]const u8) !void {
-    if (!ensureNetwork()) return error.NoNetwork;
+    if (!pocketbook.ensureNetwork()) return error.NoNetwork;
 
     pb.ShowHourglass();
     defer pb.HideHourglass();
@@ -239,41 +394,25 @@ fn onDownloadProgress(downloaded: u64, total: u64) void {
     _ = pb.UpdateProgressbar(text.ptr, percent);
 }
 
-/// Called by InkView shortly after the last loaded entry was painted
+/// Called by InkView shortly after the last loaded entry was painted.
+/// Loads the next page and shows the same screen again, now with more behind it.
 fn loadMoreTimer() callconv(.c) void {
     more_pending = false;
     if (feeds.items.len == 0) return;
     const feed = &feeds.items[feeds.items.len - 1];
+    if (feed.next_url == null) return;
 
-    loadMore(feed) catch |err| {
+    pb.ShowHourglass();
+    const loaded = if (pocketbook.ensureNetwork()) feed.loadMore() else error.NoNetwork;
+    pb.HideHourglass();
+
+    loaded catch |err| {
         trace("loadMore failed: {s}\n", .{@errorName(err)});
         // Do not try again on every repaint
         feed.next_url = null;
         utils.showError(pb, APP_TITLE, "Could not load more entries", err);
+        return;
     };
-}
-
-/// Appends the next page of the catalog to the list on screen
-fn loadMore(feed: *Feed) !void {
-    const url = feed.next_url orelse return;
-    trace("loadMore {s}\n", .{url});
-    if (!ensureNetwork()) return error.NoNetwork;
-
-    pb.ShowHourglass();
-    defer pb.HideHourglass();
-
-    const body = try net.fetch(gpa, url);
-    defer gpa.free(body);
-
-    // Into the arena of the list, the new entries live as long as the old ones
-    const allocator = feed.arena.allocator();
-    const parsed = try xml.parseOPDSFeed(allocator, body, url);
-    trace("loaded {d} more entries, next={?s}\n", .{ parsed.entries.len, parsed.next_url });
-
-    feed.entries = try std.mem.concat(allocator, xml.Entry, &.{ feed.entries, parsed.entries });
-    feed.next_url = if (parsed.entries.len == 0) null else parsed.next_url;
-
-    // Show the same screen again, now with more behind it
     pb.OpenList(APP_TITLE, null, pb.ScreenWidth(), item_height, @intCast(feed.entries.len), feed.top, listHandler);
 }
 
@@ -281,7 +420,7 @@ fn downloadBook(entry: xml.Entry, download: xml.Download) void {
     var name_buf: [xml.MAX_FILENAME]u8 = undefined;
     const filename = entry.saveName(&name_buf, download.format);
 
-    if (!ensureNetwork()) {
+    if (!pocketbook.ensureNetwork()) {
         utils.showError(pb, APP_TITLE, "Could not download the book", error.NoNetwork);
         return;
     }
@@ -294,39 +433,11 @@ fn downloadBook(entry: xml.Entry, download: xml.Download) void {
         return;
     };
     pb.CloseProgressbar();
-    rescanLibrary();
+    pocketbook.rescanLibrary(DOWNLOAD_DIR);
 
     var msg_buf: [256]u8 = undefined;
     const msg = std.fmt.bufPrintSentinel(&msg_buf, "Saved to Downloads:\n{s}", .{filename}, 0) catch "Saved to Downloads.";
     pb.Message(pb.ICON_INFORMATION, APP_TITLE, msg.ptr, 3000);
-}
-
-/// Asks the reader's library scanner to index the download folder, so a new book shows up
-/// in the library right away instead of after the next reboot.
-fn rescanLibrary() void {
-    const task = pb.FindTaskByAppName("scanner.app");
-    trace("scanner task={d}\n", .{task});
-    if (task == -1) return;
-
-    // InkView wants a writable buffer
-    var request = ("-scan:" ++ DOWNLOAD_DIR).*;
-    const result = pb.SendRequestTo(task, pb.REQ_OPENBOOK, &request, request.len + 1, 0, 2000);
-    trace("scan request result={d}\n", .{result});
-}
-
-fn ensureNetwork() bool {
-    if (pb.QueryNetwork() & pb.NET_CONNECTED != 0) return true;
-
-    return pb.NetConnect(null) == pb.NET_OK;
-}
-
-/// Zig's own I/O layer makes system calls the reader's 3.10 kernel lacks, so write through libc.
-fn trace(comptime fmt: []const u8, args: anytype) void {
-    if (builtin.mode != .debug) return;
-
-    var buf: [512]u8 = undefined;
-    const msg = std.fmt.bufPrint(&buf, fmt, args) catch return;
-    _ = std.c.write(2, msg.ptr, msg.len);
 }
 
 pub fn main() void {

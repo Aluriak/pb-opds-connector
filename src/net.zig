@@ -1,8 +1,12 @@
 const builtin = @import("builtin");
 const std = @import("std");
 const curl = @import("libcurl.zig");
+const Server = @import("server.zig").Server;
 
 const USER_AGENT = "pb-opds-connector/" ++ @import("build_options").version;
+
+/// The custom server the user is browsing, null for the built-in catalogs
+var server: ?Server = null;
 
 /// Called while a download runs, with the bytes received so far and the total
 /// or 0 if the server does not say.
@@ -23,6 +27,10 @@ const Target = union(enum) {
     memory: *Buffer,
     file: *std.c.FILE,
 };
+
+pub fn useServer(new_server: ?Server) void {
+    server = new_server;
+}
 
 fn curlWriteBuffer(ptr: [*]const u8, size: usize, nmemb: usize, userdata: *anyopaque) callconv(.c) usize {
     const buffer: *Buffer = @ptrCast(@alignCast(userdata));
@@ -45,10 +53,20 @@ fn perform(url: [:0]const u8, target: Target) !void {
     _ = curl.curl_easy_setopt(handle, curl.CURLOPT_URL, url.ptr);
     _ = curl.curl_easy_setopt(handle, curl.CURLOPT_USERAGENT, USER_AGENT);
     _ = curl.curl_easy_setopt(handle, curl.CURLOPT_TIMEOUT, @as(c_long, 120));
-    _ = curl.curl_easy_setopt(handle, curl.CURLOPT_CONNECTTIMEOUT, @as(c_long, 10));
+    _ = curl.curl_easy_setopt(handle, curl.CURLOPT_CONNECTTIMEOUT, @as(c_long, 5));
     _ = curl.curl_easy_setopt(handle, curl.CURLOPT_FOLLOWLOCATION, @as(c_long, 1));
     // Treat HTTP 4xx/5xx as an error instead of handing the error page to the caller
     _ = curl.curl_easy_setopt(handle, curl.CURLOPT_FAILONERROR, @as(c_long, 1));
+
+    if (server) |s| {
+        if (s.hasLogin() and s.owns(url)) {
+            var buf: [160]u8 = undefined;
+            if (s.userpwd(&buf)) |userpwd| {
+                _ = curl.curl_easy_setopt(handle, curl.CURLOPT_HTTPAUTH, curl.CURLAUTH_ANY);
+                _ = curl.curl_easy_setopt(handle, curl.CURLOPT_USERPWD, userpwd.ptr);
+            } else |_| {}
+        }
+    }
 
     switch (target) {
         .memory => |buffer| {
