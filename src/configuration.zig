@@ -17,14 +17,17 @@ pub fn load(allocator: std.mem.Allocator) ![]Server {
     const config = pb.OpenConfig(CONFIG_PATH, null) orelse return &.{};
     defer pb.CloseConfigNoSave(config);
 
-    const count: usize = @intCast(@max(0, pb.ReadInt(config, "count", 0)));
     var servers: std.ArrayList(Server) = .empty;
     errdefer {
         for (servers.items) |server| server.free(allocator);
         servers.deinit(allocator);
     }
-    for (0..count) |i| {
+
+    var i: usize = 0;
+    while (true) : (i += 1) {
         var buf: [32]u8 = undefined;
+        // The first index without an address is the end of the list
+        if (pb.ReadString(config, key(&buf, i, .url), "")[0] == 0) break;
         const server = Server.init(
             allocator,
             std.mem.span(pb.ReadString(config, key(&buf, i, .name), "")),
@@ -48,7 +51,6 @@ pub fn store(servers: []const Server) void {
     const config = pb.OpenConfig(CONFIG_PATH, null) orelse return;
     defer pb.CloseConfig(config);
 
-    pb.WriteInt(config, "count", @intCast(servers.len));
     for (servers, 0..) |server, i| {
         var buf: [32]u8 = undefined;
         pb.WriteString(config, key(&buf, i, .name), server.name.ptr);

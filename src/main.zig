@@ -4,6 +4,7 @@ const net = @import("net.zig");
 const utils = @import("utils.zig");
 const xml = @import("xml.zig");
 const server_form = @import("server_form.zig");
+const download = @import("download.zig");
 const pocketbook = @import("pocketbook.zig");
 const trace = pocketbook.trace;
 
@@ -20,10 +21,6 @@ const CATALOGS = [_]xml.Entry{
     .{ .title = "ManyBooks", .author = "manybooks.net", .nav_url = "https://manybooks.net/opds/index.php" },
     .{ .title = "Project Gutenberg", .author = "gutenberg.org", .nav_url = "https://www.gutenberg.org/ebooks.opds/" },
 };
-
-/// All downloads are stored into the "Downloads" folder.
-/// The PocketBook scanner is asked to only re-scan this folder after a download.
-const DOWNLOAD_DIR = "/mnt/ext1/Downloads";
 
 const Feed = struct {
     /// Owns the entries and all their strings
@@ -61,10 +58,6 @@ var padding: c_int = 0;
 var title_font: ?*pb.ifont = null;
 var author_font: ?*pb.ifont = null;
 
-// The format menu. InkView keeps pointers into these while the menu is open
-var menu_items: [xml.MAX_DOWNLOADS + 2]pb.imenu = undefined;
-var menu_texts: [xml.MAX_DOWNLOADS][160]u8 = undefined;
-var menu_entry: xml.Entry = .{};
 /// Servers the user added, shown after the built-in catalogs
 var custom_servers: std.ArrayList(Server) = .empty;
 /// Rows of the start screen: built-in catalogs, custom servers, and the "Add server" row
@@ -75,10 +68,8 @@ var delete_text: [128]u8 = undefined;
 /// Set while the next page of a list is waiting to be loaded
 var more_pending = false;
 
-/// "Step" means a tenth of the file (or a megabyte, when the server doesn't give the size).
-/// So the variable is what turns thousands of progress calls into about ten screen updates per download,
-/// which matters on e-ink where each update is slow.
-var progressStep: u64 = 0;
+// The menu of a custom server. InkView keeps pointers into it while the menu is open
+var server_menu: [4]pb.imenu = undefined;
 
 fn mainHandler(event_type: c_int, par1: c_int, par2: c_int) callconv(.c) c_int {
     trace("main event={d} par1={d} par2={d}\n", .{ event_type, par1, par2 });
@@ -182,10 +173,8 @@ fn listHandler(action: c_int, x: c_int, y: c_int, idx: c_int, state: c_int) call
                 }
             }
 
-            if (entry.downloads.len == 1) {
-                downloadBook(entry, entry.downloads[0]);
-            } else if (entry.downloads.len > 1) {
-                openDownloadMenu(entry);
+            if (entry.downloads.len > 0) {
+                download.start(entry);
             } else if (entry.nav_url) |url| {
                 // Pushes onto feeds, `feed` must not be used afterwards
                 openFeed(url);
@@ -253,13 +242,13 @@ fn rebuildCatalogRows() !void {
 fn openServerMenu(index: usize) void {
     server_index = index;
 
-    menu_items[0] = .{ .type = pb.ITEM_HEADER, .index = 0, .text = @constCast(custom_servers.items[index].name.ptr), .submenu = null };
-    menu_items[1] = .{ .type = pb.ITEM_ACTIVE, .index = 1, .text = @constCast("Edit"), .submenu = null };
-    menu_items[2] = .{ .type = pb.ITEM_ACTIVE, .index = 2, .text = @constCast("Delete"), .submenu = null };
+    server_menu[0] = .{ .type = pb.ITEM_HEADER, .index = 0, .text = @constCast(custom_servers.items[index].name.ptr), .submenu = null };
+    server_menu[1] = .{ .type = pb.ITEM_ACTIVE, .index = 1, .text = @constCast("Edit"), .submenu = null };
+    server_menu[2] = .{ .type = pb.ITEM_ACTIVE, .index = 2, .text = @constCast("Delete"), .submenu = null };
     // A zeroed item ends the menu
-    menu_items[3] = .{ .type = 0, .index = 0, .text = null, .submenu = null };
+    server_menu[3] = .{ .type = 0, .index = 0, .text = null, .submenu = null };
 
-    pb.OpenMenu(&menu_items, 1, @divTrunc(pb.ScreenWidth(), 8), @divTrunc(pb.ScreenHeight(), 3), serverMenuHandler);
+    pb.OpenMenu(&server_menu, 1, @divTrunc(pb.ScreenWidth(), 8), @divTrunc(pb.ScreenHeight(), 3), serverMenuHandler);
 }
 
 fn serverMenuHandler(index: c_int) callconv(.c) void {
@@ -358,42 +347,6 @@ fn loadFeed(url: [:0]const u8) !void {
     try feeds.append(gpa, .{ .arena = arena, .entries = parsed.entries, .next_url = parsed.next_url });
 }
 
-/// Lets the user pick one of several formats of the same book
-fn openDownloadMenu(entry: xml.Entry) void {
-    menu_entry = entry;
-
-    menu_items[0] = .{ .type = pb.ITEM_HEADER, .index = 0, .text = @constCast("Download"), .submenu = null };
-    for (entry.downloads, 0..) |download, i| {
-        const text = download.description(&menu_texts[i]);
-        menu_items[i + 1] = .{ .type = pb.ITEM_ACTIVE, .index = @intCast(i + 1), .text = @constCast(text.ptr), .submenu = null };
-    }
-    // A zeroed item ends the menu
-    menu_items[entry.downloads.len + 1] = .{ .type = 0, .index = 0, .text = null, .submenu = null };
-
-    pb.OpenMenu(&menu_items, 1, @divTrunc(pb.ScreenWidth(), 8), @divTrunc(pb.ScreenHeight(), 3), menuHandler);
-}
-
-fn menuHandler(index: c_int) callconv(.c) void {
-    trace("menu index={d}\n", .{index});
-
-    // Anything else means the menu was closed without a choice
-    if (index < 1 or index > menu_entry.downloads.len) return;
-    downloadBook(menu_entry, menu_entry.downloads[@intCast(index - 1)]);
-}
-
-fn onDownloadProgress(downloaded: u64, total: u64) void {
-    // Steps of 10 percent, or of 1 MB when the server does not tell the size
-    const step = if (total > 0) downloaded * 10 / total else downloaded / (1024 * 1024);
-    if (step == progressStep) return;
-    progressStep = step;
-
-    var buf: [64]u8 = undefined;
-    var size_buf: [16]u8 = undefined;
-    const text = std.fmt.bufPrintSentinel(&buf, "{s}", .{utils.formatSize(&size_buf, downloaded)}, 0) catch return;
-    const percent: c_int = if (total > 0) @intCast(@min(100, downloaded * 100 / total)) else 0;
-    _ = pb.UpdateProgressbar(text.ptr, percent);
-}
-
 /// Called by InkView shortly after the last loaded entry was painted.
 /// Loads the next page and shows the same screen again, now with more behind it.
 fn loadMoreTimer() callconv(.c) void {
@@ -414,30 +367,6 @@ fn loadMoreTimer() callconv(.c) void {
         return;
     };
     pb.OpenList(APP_TITLE, null, pb.ScreenWidth(), item_height, @intCast(feed.entries.len), feed.top, listHandler);
-}
-
-fn downloadBook(entry: xml.Entry, download: xml.Download) void {
-    var name_buf: [xml.MAX_FILENAME]u8 = undefined;
-    const filename = entry.saveName(&name_buf, download.format);
-
-    if (!pocketbook.ensureNetwork()) {
-        utils.showError(pb, APP_TITLE, "Could not download the book", error.NoNetwork);
-        return;
-    }
-
-    progressStep = 0;
-    pb.OpenProgressbar(pb.ICON_INFORMATION, "Downloading", entry.title.ptr, 0, null);
-    net.download(download.url, DOWNLOAD_DIR, filename, onDownloadProgress) catch |err| {
-        pb.CloseProgressbar();
-        utils.showError(pb, APP_TITLE, "Could not download the book", err);
-        return;
-    };
-    pb.CloseProgressbar();
-    pocketbook.rescanLibrary(DOWNLOAD_DIR);
-
-    var msg_buf: [256]u8 = undefined;
-    const msg = std.fmt.bufPrintSentinel(&msg_buf, "Saved to Downloads:\n{s}", .{filename}, 0) catch "Saved to Downloads.";
-    pb.Message(pb.ICON_INFORMATION, APP_TITLE, msg.ptr, 3000);
 }
 
 pub fn main() void {
