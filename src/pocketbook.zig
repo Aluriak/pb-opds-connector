@@ -30,9 +30,3 @@ pub fn trace(comptime fmt: []const u8, args: anytype) void {
     const msg = std.fmt.bufPrint(&buf, fmt, args) catch return;
     _ = std.c.write(2, msg.ptr, msg.len);
 }
-
-/// Runs `step` a moment later instead of right now, mainly used for InkView tasks.
-/// InkView should finish the first task, wait some milliseconds and then continue.
-pub fn later(step: *const fn () callconv(.c) void) void {
-    pb.SetWeakTimer("opds-step", @ptrCast(step), 100);
-}

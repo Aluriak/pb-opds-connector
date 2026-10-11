@@ -150,7 +150,7 @@ fn listHandler(action: c_int, x: c_int, y: c_int, idx: c_int, state: c_int) call
                 more_pending = true;
                 // Not from inside the painting, InkView has to finish this screen first.
                 // The cast is needed because the C header declares timer functions without a parameter list
-                pocketbook.later(loadMoreTimer);
+                pb.SetWeakTimer("opds-step", @ptrCast(&loadMoreTimer), 100);
             }
         },
         pb.LIST_OPEN => {
@@ -198,7 +198,7 @@ fn listHandler(action: c_int, x: c_int, y: c_int, idx: c_int, state: c_int) call
     return 1;
 }
 
-fn showList() callconv(.c) void {
+fn showList() void {
     const feed = &feeds.items[feeds.items.len - 1];
     pb.OpenList(APP_TITLE, null, pb.ScreenWidth(), item_height, @intCast(feed.entries.len), feed.pos, listHandler);
 }
@@ -261,7 +261,11 @@ fn serverMenuHandler(index: c_int) callconv(.c) void {
                 utils.showError(pb, APP_TITLE, "Could not open the form", error.NoSettingsFile);
             }
         },
-        2 => askDeleteServer(selected),
+        2 => {
+            const name = custom_servers.items[selected].name;
+            const text = std.fmt.bufPrintSentinel(&delete_text, "Delete the server \"{s}\"?", .{name}, 0) catch "Delete this server?";
+            pb.Dialog(pb.ICON_QUESTION, APP_TITLE, text.ptr, "Delete", "Cancel", deleteAnswered);
+        },
         // Anything else means the menu was closed without a choice
         else => {},
     }
@@ -269,9 +273,8 @@ fn serverMenuHandler(index: c_int) callconv(.c) void {
 
 /// Called when the "Add server" form was left
 fn serverEntered(server: anyerror!?Server) void {
-    trace("form closed\n", .{});
     saveServer(server) catch |err| utils.showError(pb, APP_TITLE, "Could not save the server", err);
-    pocketbook.later(showList);
+    showList();
 }
 
 fn saveServer(entered: anyerror!?Server) !void {
@@ -292,11 +295,6 @@ fn saveServer(entered: anyerror!?Server) !void {
     try rebuildCatalogRows();
 }
 
-fn askDeleteServer(index: usize) void {
-    const text = std.fmt.bufPrintSentinel(&delete_text, "Delete the server \"{s}\"?", .{custom_servers.items[index].name}, 0) catch "Delete this server?";
-    pb.Dialog(pb.ICON_QUESTION, APP_TITLE, text.ptr, "Delete", "Cancel", deleteAnswered);
-}
-
 /// Called by InkView with the number of the button that was pressed
 fn deleteAnswered(button: c_int) callconv(.c) void {
     trace("delete server answer={d}\n", .{button});
@@ -307,7 +305,7 @@ fn deleteAnswered(button: c_int) callconv(.c) void {
     net.useServer(null);
     configuration.store(custom_servers.items);
     rebuildCatalogRows() catch return;
-    pocketbook.later(showList);
+    showList();
 }
 
 fn openFeed(url: [:0]const u8) void {
