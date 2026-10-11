@@ -1,4 +1,5 @@
 const std = @import("std");
+const HostName = std.Io.net.HostName;
 
 pub const Server = struct {
     name: [:0]const u8,
@@ -19,6 +20,9 @@ pub const Server = struct {
         defer allocator.free(full);
 
         const uri = std.Uri.parse(full) catch return error.InvalidAddress;
+        const host = uri.host orelse return error.InvalidAddress;
+        HostName.validate(host.percent_encoded) catch return error.InvalidAddress;
+
         const hasPath = uri.path.percent_encoded.len > 1;
         const sUrl = try std.fmt.allocPrintSentinel(allocator, "{s}{s}", .{
             if (hasPath) full else std.mem.trimEnd(u8, full, "/"),
@@ -131,6 +135,8 @@ test "owns tells other servers apart" {
 test "init refuses what is not an address" {
     try std.testing.expectError(error.InvalidAddress, Server.init(std.testing.allocator, "Test", "calibre.lan:port", "", ""));
     try std.testing.expectError(error.InvalidAddress, Server.init(std.testing.allocator, "Test", "http://", "", ""));
+    try std.testing.expectError(error.InvalidAddress, Server.init(std.testing.allocator, "Test", "this is wrong", "", ""));
+    try std.testing.expectError(error.InvalidAddress, Server.init(std.testing.allocator, "Test", "calibre_lan", "", ""));
 }
 
 test "userpwd joins user name and password for curl" {
