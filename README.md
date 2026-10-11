@@ -6,7 +6,7 @@ An OPDS connector for PocketBook e-readers. Browse catalogs and download books s
 
 * **Native PocketBook integration:** Built on PocketBook's own SDK, so it looks and behaves like the reader's built-in apps.
 * **Browsing OPDS catalogs:**
-  * Calibre and custom endpoints
+  * [Calibre and custom endpoints](#configuration)
   * Browse a default set of OPDS catalogs
     * Flibusta
     * ManyBooks
@@ -22,6 +22,42 @@ An OPDS connector for PocketBook e-readers. Browse catalogs and download books s
    `opds-connector-<version>-<platform>.zip`. Make sure you get the correct platform.
 3. Unzip it and copy `OPDS Connector.app` into the `applications` folder of your reader.
 4. Open "OPDS Connector" from the applications list on the reader.
+
+## Configuration
+
+### Custom server
+
+Besides the built-in catalogs you can add your own OPDS servers, for example Calibre or Calibre-Web.
+
+1. Open "+ Add server" at the end of the start screen.
+2. Fill in the form and leave it with the back button. The server then appears in the list.
+
+| Field | Required | Notes |
+|---|---|---|
+| Name | yes | What the server is called in the list. |
+| URL | yes | For example `192.168.1.20:8080`. |
+| User name | no | Leave empty if the server needs no login. |
+| Password | no | Only used together with a user name. |
+
+**What happens to the URL**
+
+* Without `http://` or `https://` in front, `http://` is added.
+* Without a path, `/opds` is added, which is where Calibre serves its catalog. `192.168.1.20:8080` becomes `http://192.168.1.20:8080/opds`. If your catalog is somewhere else, type the full URL including the path.
+* A URL with a path is kept as you typed it.
+
+**When nothing is saved**
+
+* If the name or the URL is empty, the form closes without saving. There is no message.
+* If the URL is not a valid address, the app shows "Could not save the server".
+
+**Edit or delete a server**
+
+Press and hold a server you added, then choose "Edit" or "Delete". The built-in catalogs cannot be changed.
+
+**About the login**
+
+* The user name and password are stored unencrypted on the reader, in `system/config/opds-connector.cfg`. Anyone with access to the reader's storage can read them.
+* They are only sent to the server you entered, never to another server a catalog links to.
 
 ## Compatibility
 
