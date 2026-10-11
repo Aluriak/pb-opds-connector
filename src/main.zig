@@ -164,9 +164,7 @@ fn listHandler(action: c_int, x: c_int, y: c_int, idx: c_int, state: c_int) call
                     .add => {
                         // Necessarry, as we otherwise would overwrite the previously entred data.
                         server_index = null;
-                        if (!server_form.open(gpa, null, serverEntered)) {
-                            pocketbook.showError("Could not open the form", error.NoSettingsFile);
-                        }
+                        server_form.open(gpa, null, serverEntered);
                         return 1;
                     },
                     .custom => |server| net.useServer(server),
@@ -258,11 +256,7 @@ fn serverMenuHandler(index: c_int) callconv(.c) void {
     const selected = server_index orelse return;
 
     switch (index) {
-        1 => {
-            if (!server_form.open(gpa, custom_servers.items[selected], serverEntered)) {
-                pocketbook.showError("Could not open the form", error.NoSettingsFile);
-            }
-        },
+        1 => server_form.open(gpa, custom_servers.items[selected], serverEntered),
         2 => {
             const name = custom_servers.items[selected].name;
             const text = std.fmt.bufPrintSentinel(&delete_text, "Delete the server \"{s}\"?", .{name}, 0) catch "Delete this server?";
