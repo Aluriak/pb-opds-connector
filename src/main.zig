@@ -198,7 +198,7 @@ fn listHandler(action: c_int, x: c_int, y: c_int, idx: c_int, state: c_int) call
     return 1;
 }
 
-fn showList() void {
+fn showList() callconv(.c) void {
     const feed = &feeds.items[feeds.items.len - 1];
     pb.OpenList(APP_TITLE, null, pb.ScreenWidth(), item_height, @intCast(feed.entries.len), feed.pos, listHandler);
 }
@@ -271,7 +271,7 @@ fn serverMenuHandler(index: c_int) callconv(.c) void {
 fn serverEntered(server: anyerror!?Server) void {
     trace("form closed\n", .{});
     saveServer(server) catch |err| utils.showError(pb, APP_TITLE, "Could not save the server", err);
-    pocketbook.later(showListLater);
+    pocketbook.later(showList);
 }
 
 fn saveServer(entered: anyerror!?Server) !void {
@@ -307,11 +307,7 @@ fn deleteAnswered(button: c_int) callconv(.c) void {
     net.useServer(null);
     configuration.store(custom_servers.items);
     rebuildCatalogRows() catch return;
-    pocketbook.later(showListLater);
-}
-
-fn showListLater() callconv(.c) void {
-    showList();
+    pocketbook.later(showList);
 }
 
 fn openFeed(url: [:0]const u8) void {
