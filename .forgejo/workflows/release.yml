@@ -19,6 +19,8 @@ jobs:
     steps:
       - name: Check out the code
         uses: https://code.forgejo.org/actions/checkout@v7
+        with:
+          fetch-depth: 0
 
       - name: Decide what to build
         id: meta
@@ -91,6 +93,26 @@ jobs:
           (cd dist/release && sha256sum *.zip > SHA256SUMS)
           ls -la dist/release
 
+      - name: Release notes
+        if: steps.meta.outputs.build == 'true'
+        env:
+          TAG: ${{ steps.meta.outputs.tag }}
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          # The changes are all commits since the release before this one
+          previous="$(git describe --tags --abbrev=0 --match 'v[0-9]*' --exclude "${TAG}" HEAD 2> /dev/null || true)"
+          {
+            echo "Build ${VERSION}."
+            echo
+            echo "Unzip and copy \`OPDS Connector.app\` into the \`applications\` folder of your PocketBook."
+            echo "See the README for supported devices and firmware versions."
+            echo
+            echo "## Changes"
+            echo
+            git log --no-merges --invert-grep --grep='^Release [0-9]' --pretty='* %s' ${previous:+"${previous}.."}HEAD
+          } > dist/notes.md
+          cat dist/notes.md
+
       - name: Publish
         if: steps.meta.outputs.build == 'true'
         uses: https://code.forgejo.org/actions/forgejo-release@v2.13.4
@@ -100,8 +122,4 @@ jobs:
           release-dir: dist/release
           override: ${{ steps.meta.outputs.nightly }}
           prerelease: ${{ steps.meta.outputs.nightly }}
-          release-notes: |
-            Build ${{ steps.meta.outputs.version }}.
-
-            Unzip and copy `OPDS Connector.app` into the `applications` folder of your PocketBook.
-            See the README for supported devices and firmware versions.
+          release-notes-file: dist/notes.md
