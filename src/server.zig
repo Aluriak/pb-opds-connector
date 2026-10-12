@@ -1,11 +1,35 @@
 const std = @import("std");
 const HostName = std.Io.net.HostName;
 
+/// The catalogs, aka OPDS servers
+pub const Catalogs = struct {
+    servers: std.ArrayList(Server) = .empty,
+
+    const internals = [_]Server{
+        .{ .name = "Flibusta", .url = "http://flibusta.is/opds", .internal = true },
+        .{ .name = "Standard Ebooks (new releases)", .url = "https://standardebooks.org/feeds/atom/new-releases", .internal = true },
+        .{ .name = "ManyBooks", .url = "https://manybooks.net/opds/index.php", .internal = true },
+        .{ .name = "Project Gutenberg", .url = "https://www.gutenberg.org/ebooks.opds/", .internal = true },
+    };
+
+    pub fn init(allocator: std.mem.Allocator) !Catalogs {
+        var catalogs: Catalogs = .{};
+        try catalogs.servers.appendSlice(allocator, &internals);
+        return catalogs;
+    }
+
+    /// The servers the user added. Only these are stored
+    pub fn custom(catalogs: Catalogs) []Server {
+        return catalogs.servers.items[internals.len..];
+    }
+};
+
 pub const Server = struct {
     name: [:0]const u8,
     url: [:0]const u8,
     user: [:0]const u8 = "",
     password: [:0]const u8 = "",
+    internal: bool = false,
 
     /// Creates a server from what the user entered. This is the only place the address of a
     /// server is set: what was typed becomes the address of its catalog, with "http://" added

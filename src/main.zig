@@ -9,17 +9,11 @@ const trace = pocketbook.trace;
 
 const configuration = @import("configuration.zig");
 const Server = @import("server.zig").Server;
+const Catalogs = @import("server.zig").Catalogs;
 
 const pb = @import("c");
 
 const app_title = @import("build_options").app_name;
-
-const catalogs = [_]xml.Entry{
-    .{ .title = "Flibusta", .author = "flibusta.is", .nav_url = "http://flibusta.is/opds" },
-    .{ .title = "Standard Ebooks (new releases)", .author = "standardebooks.org", .nav_url = "https://standardebooks.org/feeds/atom/new-releases" },
-    .{ .title = "ManyBooks", .author = "manybooks.net", .nav_url = "https://manybooks.net/opds/index.php" },
-    .{ .title = "Project Gutenberg", .author = "gutenberg.org", .nav_url = "https://www.gutenberg.org/ebooks.opds/" },
-};
 
 const Feed = struct {
     arena: std.heap.ArenaAllocator,
@@ -55,25 +49,21 @@ var gpa: std.mem.Allocator = undefined;
 /// Whenever a new view is opened, it is pushed into this stack. Going back
 /// is just a matter of popping out the top most view.
 var feeds: std.ArrayList(Feed) = .empty;
-var started = false;
 
 var item_height: c_int = 0;
 var padding: c_int = 0;
 var title_font: ?*pb.ifont = null;
 var author_font: ?*pb.ifont = null;
 
-/// Servers the user added, shown after the built-in catalogs
-var custom_servers: std.ArrayList(Server) = .empty;
-/// Rows of the start screen: built-in catalogs, custom servers, and the "Add server" row
-var catalog_rows: std.ArrayList(xml.Entry) = .empty;
-/// The custom server a delete question is open for
+/// A list of servers, that show up on the start screen
+var catalogs: Catalogs = .{};
+
+/// The custom server an action (delete, view) is ongoing for
 var server_index: ?usize = null;
-var delete_text: [128]u8 = undefined;
 /// Set while the next page of a list is waiting to be loaded
 var more_pending = false;
 /// InkView writes what the user types on the keyboard into this
 var search_text: [128]u8 = undefined;
-
 // The menu of a custom server. InkView keeps pointers into it while the menu is open
 var server_menu: [4]pb.imenu = undefined;
 
@@ -88,14 +78,12 @@ fn mainHandler(event_type: c_int, par1: c_int, par2: c_int) callconv(.c) c_int {
             padding = @divTrunc(item_height, 8);
             title_font = pb.OpenFont(pb.iv_get_default_font(pb.FONT_BOLD), @divTrunc(item_height, 4), 1);
             author_font = pb.OpenFont(pb.iv_get_default_font(pb.FONT_STD), @divTrunc(item_height, 5), 1);
-        },
-        pb.EVT_SHOW => {
-            if (started) return 0;
-            started = true;
 
-            if (configuration.load(gpa)) |saved| {
-                custom_servers = .fromOwnedSlice(saved);
-            } else |err| trace("loading servers failed: {s}\n", .{@errorName(err)});
+            catalogs = Catalogs.init(gpa) catch {
+                pb.CloseApp();
+                return 0;
+            };
+            configuration.load(gpa, &catalogs.servers) catch |err| trace("loading servers failed: {s}\n", .{@errorName(err)});
 
             // The catalog list is the bottom of the feed stack, so Back from a catalog returns here
             feeds.append(gpa, .{ .arena = .init(gpa), .entries = &.{} }) catch {
@@ -106,8 +94,9 @@ fn mainHandler(event_type: c_int, par1: c_int, par2: c_int) callconv(.c) c_int {
                 pb.CloseApp();
                 return 0;
             };
-            showList();
         },
+        // Also sent when the app comes back to the front, the list on top is shown again then
+        pb.EVT_SHOW => if (feeds.items.len > 0) showList(),
         pb.EVT_KEYPRESS => {
             // Only reached while no list is open
             if (par1 == pb.IV_KEY_BACK) pb.CloseApp();
@@ -165,16 +154,14 @@ fn listHandler(action: c_int, x: c_int, y: c_int, idx: c_int, state: c_int) call
             const entry = feed.entries[@intCast(idx)];
 
             if (feeds.items.len == 1) {
-                switch (catalogRow(@intCast(idx))) {
-                    .add => {
-                        // Necessarry, as we otherwise would overwrite the previously entred data.
-                        server_index = null;
-                        server_form.open(gpa, null, serverEntered);
-                        return 1;
-                    },
-                    .custom => |server| net.useServer(server),
-                    .builtin => net.useServer(null),
+                // The row after the last catalog is "Add server"
+                if (idx == catalogs.servers.items.len) {
+                    // Necessarry, as we otherwise would overwrite the previously entered data.
+                    server_index = null;
+                    server_form.open(gpa, null, serverEntered);
+                    return 1;
                 }
+                net.useServer(catalogs.servers.items[@intCast(idx)]);
             }
 
             if (feed.search != null and idx == 0) {
@@ -191,9 +178,10 @@ fn listHandler(action: c_int, x: c_int, y: c_int, idx: c_int, state: c_int) call
         },
         pb.LIST_MENU => {
             // Long press or menu key: custom servers can be deleted
-            if (feeds.items.len != 1 or idx < 0 or idx >= feed.entries.len) return 0;
-            if (catalogRow(@intCast(idx)) != .custom) return 0;
-            openServerMenu(@as(usize, @intCast(idx)) - catalogs.len);
+            if (feeds.items.len != 1 or idx < 0 or idx >= catalogs.servers.items.len) return 0;
+            if (catalogs.servers.items[@intCast(idx)].internal) return 0;
+            server_index = @intCast(idx);
+            openServerMenu();
         },
         // Handle the "back" action of a user, f. ex. clicking the _back_ button.
         // This can lead to the previous screen or closing the app.
@@ -223,34 +211,27 @@ fn showList() void {
     pb.OpenList(app_title, null, pb.ScreenWidth(), item_height, @intCast(feed.entries.len), feed.pos, listHandler);
 }
 
-const CatalogRow = union(enum) { builtin, custom: Server, add };
-
-/// What a row of the start screen is. The order is the one rebuildCatalogRows puts them in.
-fn catalogRow(row: usize) CatalogRow {
-    if (row < catalogs.len) return .builtin;
-    if (row < catalogs.len + custom_servers.items.len) return .{ .custom = custom_servers.items[row - catalogs.len] };
-    return .add;
-}
-
 /// Puts the start screen together again after servers were loaded, added or deleted
 fn rebuildCatalogRows() !void {
-    catalog_rows.clearRetainingCapacity();
-    try catalog_rows.appendSlice(gpa, &catalogs);
-    for (custom_servers.items) |server| {
-        try catalog_rows.append(gpa, .{ .title = server.name, .author = server.url, .nav_url = server.url });
-    }
-    try catalog_rows.append(gpa, .{ .title = "+ Add server", .summary = "Calibre or another OPDS server" });
-
     const start_screen = &feeds.items[0];
-    start_screen.entries = catalog_rows.items;
-    start_screen.pos = @min(start_screen.pos, @as(c_int, @intCast(catalog_rows.items.len - 1)));
+    // The rows live in the arena of the start screen, the old ones are dropped
+    _ = start_screen.arena.reset(.retain_capacity);
+
+    const rows = try start_screen.arena.allocator().alloc(xml.Entry, catalogs.servers.items.len + 1);
+    for (catalogs.servers.items, 0..) |server, i| {
+        rows[i] = .{ .title = server.name, .author = server.url, .nav_url = server.url };
+    }
+    rows[rows.len - 1] = .{ .title = "+ Add server", .summary = "Calibre or another OPDS server" };
+
+    start_screen.entries = rows;
+    start_screen.pos = @min(start_screen.pos, @as(c_int, @intCast(rows.len - 1)));
 }
 
 /// Lets the user pick what to do with a server they added
-fn openServerMenu(index: usize) void {
-    server_index = index;
+fn openServerMenu() void {
+    const server = catalogs.servers.items[server_index.?];
 
-    server_menu[0] = .{ .type = pb.ITEM_HEADER, .index = 0, .text = @constCast(custom_servers.items[index].name.ptr), .submenu = null };
+    server_menu[0] = .{ .type = pb.ITEM_HEADER, .index = 0, .text = @constCast(server.name.ptr), .submenu = null };
     server_menu[1] = .{ .type = pb.ITEM_ACTIVE, .index = 1, .text = @constCast("Edit"), .submenu = null };
     server_menu[2] = .{ .type = pb.ITEM_ACTIVE, .index = 2, .text = @constCast("Delete"), .submenu = null };
     // A zeroed item ends the menu
@@ -264,12 +245,8 @@ fn serverMenuHandler(index: c_int) callconv(.c) void {
     const selected = server_index orelse return;
 
     switch (index) {
-        1 => server_form.open(gpa, custom_servers.items[selected], serverEntered),
-        2 => {
-            const name = custom_servers.items[selected].name;
-            const text = std.fmt.bufPrintSentinel(&delete_text, "Delete the server \"{s}\"?", .{name}, 0) catch "Delete this server?";
-            pb.Dialog(pb.ICON_QUESTION, app_title, text.ptr, "Delete", "Cancel", deleteAnswered);
-        },
+        1 => server_form.open(gpa, catalogs.servers.items[selected], serverEntered),
+        2 => pb.Dialog(pb.ICON_QUESTION, app_title, "Delete this server?", "Delete", "Cancel", deleteAnswered),
         // Anything else means the menu was closed without a choice
         else => {},
     }
@@ -287,15 +264,15 @@ fn saveServer(entered: anyerror!?Server) !void {
     trace("save server [{s}] {s} user=[{s}]\n", .{ server.name, server.url, server.user });
 
     if (server_index) |index| {
-        custom_servers.items[index].free(gpa);
-        custom_servers.items[index] = server;
+        catalogs.servers.items[index].free(gpa);
+        catalogs.servers.items[index] = server;
         // The network layer may still point to the strings just released
         net.useServer(null);
     } else {
         errdefer server.free(gpa);
-        try custom_servers.append(gpa, server);
+        try catalogs.servers.append(gpa, server);
     }
-    configuration.store(custom_servers.items);
+    configuration.store(catalogs.custom());
     try rebuildCatalogRows();
 }
 
@@ -303,11 +280,11 @@ fn saveServer(entered: anyerror!?Server) !void {
 fn deleteAnswered(button: c_int) callconv(.c) void {
     trace("delete server answer={d}\n", .{button});
     const index = server_index orelse return;
-    if (button != 1 or index >= custom_servers.items.len) return;
+    if (button != 1 or index >= catalogs.servers.items.len) return;
 
-    custom_servers.orderedRemove(index).free(gpa);
+    catalogs.servers.orderedRemove(index).free(gpa);
     net.useServer(null);
-    configuration.store(custom_servers.items);
+    configuration.store(catalogs.custom());
     rebuildCatalogRows() catch return;
     showList();
 }

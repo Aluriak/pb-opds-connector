@@ -49,9 +49,10 @@ fmt-fix:
 test:
 	zig build test --summary all
 
-## install: copy the executable from zig-out/bin to the connected reader
+## install: copy the executable from zig-out/bin to the connected reader and unmount it
 .PHONY: install
 install:
 	@test -d "$(DEVICE)/applications" || { echo "No reader found at $(DEVICE)"; exit 1; }
 	cp -X "zig-out/bin/$(APP)" "$(DEVICE)/applications/$(APP)"
 	@rm -f "$(DEVICE)/applications/._$(APP)"
+	diskutil unmount "$(DEVICE)"

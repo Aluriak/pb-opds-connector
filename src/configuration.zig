@@ -13,15 +13,9 @@ fn key(buf: *[32]u8, index: usize, field: Field) [*:0]const u8 {
 }
 
 /// Load the configuration
-pub fn load(allocator: std.mem.Allocator) ![]Server {
-    const config = pb.OpenConfig(config_path, null) orelse return &.{};
+pub fn load(allocator: std.mem.Allocator, servers: *std.ArrayList(Server)) !void {
+    const config = pb.OpenConfig(config_path, null) orelse return;
     defer pb.CloseConfigNoSave(config);
-
-    var servers: std.ArrayList(Server) = .empty;
-    errdefer {
-        for (servers.items) |server| server.free(allocator);
-        servers.deinit(allocator);
-    }
 
     var i: usize = 0;
     while (true) : (i += 1) {
@@ -43,7 +37,6 @@ pub fn load(allocator: std.mem.Allocator) ![]Server {
         errdefer server.free(allocator);
         try servers.append(allocator, server);
     }
-    return servers.toOwnedSlice(allocator);
 }
 
 /// Store the configuration
