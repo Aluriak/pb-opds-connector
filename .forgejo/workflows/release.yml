@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
 
 env:
-  ZIG_VERSION: 0.17.0-dev.2267+48abf1a34
+  ZIG_VERSION: 0.17.0
 
 jobs:
   release:
@@ -66,7 +66,7 @@ jobs:
           ln -sf /opt/zig/zig /usr/local/bin/zig
           zig version
 
-      - name: Check formatting
+      - name: Format
         if: steps.meta.outputs.build == 'true'
         run: make fmt-check
 

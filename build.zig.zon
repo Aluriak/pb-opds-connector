@@ -1,8 +1,8 @@
 .{
     .name = .pb_opds_connector,
-    .version = "0.3.0",
+    .version = "0.3.1",
     .fingerprint = 0x5f18185e8c51a5ea,
-    .minimum_zig_version = "0.17.0-dev.2267+48abf1a34",
+    .minimum_zig_version = "0.17.0",
     .dependencies = .{
         .xml = .{
             .url = "git+https://github.com/carlmontanari/zig-xml#13934ee5fa8337523f8caae2f5de0263a67c70c3",
