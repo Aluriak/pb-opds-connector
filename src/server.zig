@@ -11,31 +11,31 @@ pub const Server = struct {
     /// server is set: what was typed becomes the address of its catalog, with "http://" added
     /// when no scheme is given and the usual "/opds" path when there is none.
     pub fn init(allocator: std.mem.Allocator, name: []const u8, address: []const u8, user: []const u8, password: []const u8) !Server {
-        const sName = try allocator.dupeSentinel(u8, std.mem.trim(u8, name, " "), 0);
-        errdefer allocator.free(sName);
+        const s_name = try allocator.dupeSentinel(u8, std.mem.trim(u8, name, " "), 0);
+        errdefer allocator.free(s_name);
 
-        const sAddress = std.mem.trim(u8, address, " \t\r\n");
-        const scheme = if (std.mem.indexOf(u8, sAddress, "://") == null) "http://" else "";
-        const full = try std.fmt.allocPrint(allocator, "{s}{s}", .{ scheme, sAddress });
+        const s_address = std.mem.trim(u8, address, " \t\r\n");
+        const scheme = if (std.mem.indexOf(u8, s_address, "://") == null) "http://" else "";
+        const full = try std.fmt.allocPrint(allocator, "{s}{s}", .{ scheme, s_address });
         defer allocator.free(full);
 
         const uri = std.Uri.parse(full) catch return error.InvalidAddress;
         const host = uri.host orelse return error.InvalidAddress;
         HostName.validate(host.percent_encoded) catch return error.InvalidAddress;
 
-        const hasPath = uri.path.percent_encoded.len > 1;
-        const sUrl = try std.fmt.allocPrintSentinel(allocator, "{s}{s}", .{
-            if (hasPath) full else std.mem.trimEnd(u8, full, "/"),
-            if (hasPath) "" else "/opds",
+        const has_path = uri.path.percent_encoded.len > 1;
+        const s_url = try std.fmt.allocPrintSentinel(allocator, "{s}{s}", .{
+            if (has_path) full else std.mem.trimEnd(u8, full, "/"),
+            if (has_path) "" else "/opds",
         }, 0);
-        errdefer allocator.free(sUrl);
+        errdefer allocator.free(s_url);
 
-        const sUser = try allocator.dupeSentinel(u8, std.mem.trim(u8, user, " "), 0);
-        errdefer allocator.free(sUser);
+        const s_user = try allocator.dupeSentinel(u8, std.mem.trim(u8, user, " "), 0);
+        errdefer allocator.free(s_user);
         // A password without a user name is of no use
-        const sPassword = try allocator.dupeSentinel(u8, if (sUser.len == 0) "" else password, 0);
+        const s_password = try allocator.dupeSentinel(u8, if (s_user.len == 0) "" else password, 0);
 
-        return .{ .name = sName, .url = sUrl, .user = sUser, .password = sPassword };
+        return .{ .name = s_name, .url = s_url, .user = s_user, .password = s_password };
     }
 
     pub fn free(server: Server, allocator: std.mem.Allocator) void {

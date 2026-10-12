@@ -5,7 +5,7 @@ const Server = @import("server.zig").Server;
 const Field = enum { name, url, user, password };
 
 /// PocketBooks location for storing configuration of applications.
-pub const CONFIG_PATH = "/mnt/ext1/system/config/opds-connector.cfg";
+pub const config_path = "/mnt/ext1/system/config/opds-connector.cfg";
 
 /// Settings are stored as "server.<index>.<field>"
 fn key(buf: *[32]u8, index: usize, field: Field) [*:0]const u8 {
@@ -14,7 +14,7 @@ fn key(buf: *[32]u8, index: usize, field: Field) [*:0]const u8 {
 
 /// Load the configuration
 pub fn load(allocator: std.mem.Allocator) ![]Server {
-    const config = pb.OpenConfig(CONFIG_PATH, null) orelse return &.{};
+    const config = pb.OpenConfig(config_path, null) orelse return &.{};
     defer pb.CloseConfigNoSave(config);
 
     var servers: std.ArrayList(Server) = .empty;
@@ -48,7 +48,7 @@ pub fn load(allocator: std.mem.Allocator) ![]Server {
 
 /// Store the configuration
 pub fn store(servers: []const Server) void {
-    const config = pb.OpenConfig(CONFIG_PATH, null) orelse return;
+    const config = pb.OpenConfig(config_path, null) orelse return;
     defer pb.CloseConfig(config);
 
     for (servers, 0..) |server, i| {

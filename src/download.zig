@@ -8,21 +8,21 @@ const xml = @import("xml.zig");
 
 const pb = @import("c");
 
-const APP_TITLE = @import("build_options").appName;
+const app_title = @import("build_options").app_name;
 
 /// All downloads are stored into the "Downloads" folder.
 /// The PocketBook scanner is asked to only re-scan this folder after a download.
-const DOWNLOAD_DIR = "/mnt/ext1/Downloads";
+const download_dir = "/mnt/ext1/Downloads";
 
 // The format menu. InkView keeps pointers into these while the menu is open
-var menu_items: [xml.MAX_DOWNLOADS + 2]pb.imenu = undefined;
-var menu_texts: [xml.MAX_DOWNLOADS][160]u8 = undefined;
+var menu_items: [xml.max_downloads + 2]pb.imenu = undefined;
+var menu_texts: [xml.max_downloads][160]u8 = undefined;
 var menu_entry: xml.Entry = .{};
 
 /// "Step" means a tenth of the file (or a megabyte, when the server doesn't give the size).
 /// So the variable is what turns thousands of progress calls into about ten screen updates per download,
 /// which matters on e-ink where each update is slow.
-var progressStep: u64 = 0;
+var progress_step: u64 = 0;
 
 /// Downloads the book of `entry`. If it comes in several formats, the user picks one first.
 pub fn start(entry: xml.Entry) void {
@@ -57,7 +57,7 @@ fn menuHandler(index: c_int) callconv(.c) void {
 }
 
 fn downloadBook(entry: xml.Entry, download: xml.Download) void {
-    var name_buf: [xml.MAX_FILENAME]u8 = undefined;
+    var name_buf: [xml.max_filename]u8 = undefined;
     const filename = entry.saveName(&name_buf, download.format);
 
     if (!pocketbook.ensureNetwork()) {
@@ -65,26 +65,26 @@ fn downloadBook(entry: xml.Entry, download: xml.Download) void {
         return;
     }
 
-    progressStep = 0;
+    progress_step = 0;
     pb.OpenProgressbar(pb.ICON_INFORMATION, "Downloading", entry.title.ptr, 0, null);
-    net.download(download.url, DOWNLOAD_DIR, filename, onProgress) catch |err| {
+    net.download(download.url, download_dir, filename, onProgress) catch |err| {
         pb.CloseProgressbar();
         pocketbook.showError("Could not download the book", err);
         return;
     };
     pb.CloseProgressbar();
-    pocketbook.rescanLibrary(DOWNLOAD_DIR);
+    pocketbook.rescanLibrary(download_dir);
 
     var msg_buf: [256]u8 = undefined;
     const msg = std.fmt.bufPrintSentinel(&msg_buf, "Saved to Downloads:\n{s}", .{filename}, 0) catch "Saved to Downloads.";
-    pb.Message(pb.ICON_INFORMATION, APP_TITLE, msg.ptr, 3000);
+    pb.Message(pb.ICON_INFORMATION, app_title, msg.ptr, 3000);
 }
 
 fn onProgress(downloaded: u64, total: u64) void {
     // Steps of 10 percent, or of 1 MB when the server does not tell the size
     const step = if (total > 0) downloaded * 10 / total else downloaded / (1024 * 1024);
-    if (step == progressStep) return;
-    progressStep = step;
+    if (step == progress_step) return;
+    progress_step = step;
 
     var buf: [64]u8 = undefined;
     var size_buf: [16]u8 = undefined;

@@ -3,6 +3,7 @@ const net = @import("net.zig");
 const xml = @import("xml.zig");
 const server_form = @import("server_form.zig");
 const download = @import("download.zig");
+const search = @import("search.zig");
 const pocketbook = @import("pocketbook.zig");
 const trace = pocketbook.trace;
 
@@ -11,9 +12,9 @@ const Server = @import("server.zig").Server;
 
 const pb = @import("c");
 
-const APP_TITLE = @import("build_options").appName;
+const app_title = @import("build_options").app_name;
 
-const CATALOGS = [_]xml.Entry{
+const catalogs = [_]xml.Entry{
     .{ .title = "Flibusta", .author = "flibusta.is", .nav_url = "http://flibusta.is/opds" },
     .{ .title = "Standard Ebooks (new releases)", .author = "standardebooks.org", .nav_url = "https://standardebooks.org/feeds/atom/new-releases" },
     .{ .title = "ManyBooks", .author = "manybooks.net", .nav_url = "https://manybooks.net/opds/index.php" },
@@ -29,6 +30,8 @@ const Feed = struct {
     next_url: ?[:0]const u8 = null,
     /// First entry of the screen the list currently shows
     top: c_int = 0,
+    /// How the catalog of this list is searched. If set, the first entry is the "Search" row
+    search: ?search.Search = null,
 
     /// Appends the next page of the catalog to the entries
     fn loadMore(feed: *Feed) !void {
@@ -38,7 +41,7 @@ const Feed = struct {
         defer gpa.free(body);
 
         const allocator = feed.arena.allocator();
-        const parsed = try xml.parseOPDSFeed(allocator, body, url);
+        const parsed = try xml.parseOpdsFeed(allocator, body, url);
 
         feed.entries = try std.mem.concat(allocator, xml.Entry, &.{ feed.entries, parsed.entries });
         feed.next_url = if (parsed.entries.len == 0) null else parsed.next_url;
@@ -68,6 +71,8 @@ var server_index: ?usize = null;
 var delete_text: [128]u8 = undefined;
 /// Set while the next page of a list is waiting to be loaded
 var more_pending = false;
+/// InkView writes what the user types on the keyboard into this
+var search_text: [128]u8 = undefined;
 
 // The menu of a custom server. InkView keeps pointers into it while the menu is open
 var server_menu: [4]pb.imenu = undefined;
@@ -77,7 +82,7 @@ fn mainHandler(event_type: c_int, par1: c_int, par2: c_int) callconv(.c) c_int {
 
     switch (event_type) {
         pb.EVT_INIT => {
-            _ = pb.SetSubtaskInfo(pb.GetCurrentTask(), 0, APP_TITLE, null);
+            _ = pb.SetSubtaskInfo(pb.GetCurrentTask(), 0, app_title, null);
 
             item_height = @divTrunc(pb.ScreenHeight(), 10);
             padding = @divTrunc(item_height, 8);
@@ -172,20 +177,23 @@ fn listHandler(action: c_int, x: c_int, y: c_int, idx: c_int, state: c_int) call
                 }
             }
 
-            if (entry.downloads.len > 0) {
+            if (feed.search != null and idx == 0) {
+                search_text[0] = 0;
+                pb.OpenKeyboard("Search", &search_text, search_text.len - 1, pb.KBD_NORMAL, searchEntered);
+            } else if (entry.downloads.len > 0) {
                 download.start(entry);
             } else if (entry.nav_url) |url| {
                 // Pushes onto feeds, `feed` must not be used afterwards
                 openFeed(url);
             } else {
-                pb.Message(pb.ICON_INFORMATION, APP_TITLE, "Nothing to open for this entry.", 3000);
+                pb.Message(pb.ICON_INFORMATION, app_title, "Nothing to open for this entry.", 3000);
             }
         },
         pb.LIST_MENU => {
             // Long press or menu key: custom servers can be deleted
             if (feeds.items.len != 1 or idx < 0 or idx >= feed.entries.len) return 0;
             if (catalogRow(@intCast(idx)) != .custom) return 0;
-            openServerMenu(@as(usize, @intCast(idx)) - CATALOGS.len);
+            openServerMenu(@as(usize, @intCast(idx)) - catalogs.len);
         },
         // Handle the "back" action of a user, f. ex. clicking the _back_ button.
         // This can lead to the previous screen or closing the app.
@@ -212,22 +220,22 @@ fn listHandler(action: c_int, x: c_int, y: c_int, idx: c_int, state: c_int) call
 
 fn showList() void {
     const feed = &feeds.items[feeds.items.len - 1];
-    pb.OpenList(APP_TITLE, null, pb.ScreenWidth(), item_height, @intCast(feed.entries.len), feed.pos, listHandler);
+    pb.OpenList(app_title, null, pb.ScreenWidth(), item_height, @intCast(feed.entries.len), feed.pos, listHandler);
 }
 
 const CatalogRow = union(enum) { builtin, custom: Server, add };
 
 /// What a row of the start screen is. The order is the one rebuildCatalogRows puts them in.
 fn catalogRow(row: usize) CatalogRow {
-    if (row < CATALOGS.len) return .builtin;
-    if (row < CATALOGS.len + custom_servers.items.len) return .{ .custom = custom_servers.items[row - CATALOGS.len] };
+    if (row < catalogs.len) return .builtin;
+    if (row < catalogs.len + custom_servers.items.len) return .{ .custom = custom_servers.items[row - catalogs.len] };
     return .add;
 }
 
 /// Puts the start screen together again after servers were loaded, added or deleted
 fn rebuildCatalogRows() !void {
     catalog_rows.clearRetainingCapacity();
-    try catalog_rows.appendSlice(gpa, &CATALOGS);
+    try catalog_rows.appendSlice(gpa, &catalogs);
     for (custom_servers.items) |server| {
         try catalog_rows.append(gpa, .{ .title = server.name, .author = server.url, .nav_url = server.url });
     }
@@ -260,7 +268,7 @@ fn serverMenuHandler(index: c_int) callconv(.c) void {
         2 => {
             const name = custom_servers.items[selected].name;
             const text = std.fmt.bufPrintSentinel(&delete_text, "Delete the server \"{s}\"?", .{name}, 0) catch "Delete this server?";
-            pb.Dialog(pb.ICON_QUESTION, APP_TITLE, text.ptr, "Delete", "Cancel", deleteAnswered);
+            pb.Dialog(pb.ICON_QUESTION, app_title, text.ptr, "Delete", "Cancel", deleteAnswered);
         },
         // Anything else means the menu was closed without a choice
         else => {},
@@ -319,7 +327,9 @@ fn openFeed(url: [:0]const u8) void {
 fn loadFeed(url: [:0]const u8) !void {
     if (!pocketbook.ensureNetwork()) return error.NoNetwork;
 
-    pb.ShowHourglass();
+    // Use InkViews forced version to show the hourglass.
+    // It did not work with the normal one.
+    pb.ShowHourglassForce();
     defer pb.HideHourglass();
 
     trace("network ok, fetching\n", .{});
@@ -330,11 +340,58 @@ fn loadFeed(url: [:0]const u8) !void {
     var arena = std.heap.ArenaAllocator.init(gpa);
     errdefer arena.deinit();
 
-    const parsed = try xml.parseOPDSFeed(arena.allocator(), body, url);
+    const parsed = try xml.parseOpdsFeed(arena.allocator(), body, url);
     trace("parsed {d} entries, next={?s}\n", .{ parsed.entries.len, parsed.next_url });
     if (parsed.entries.len == 0) return error.EmptyFeed;
 
-    try feeds.append(gpa, .{ .arena = arena, .entries = parsed.entries, .next_url = parsed.next_url });
+    // A catalog that can be searched gets the "Search" row in front
+    const search_row: xml.Entry = .{ .title = "Search", .summary = "Search this catalog" };
+    const entries = if (parsed.search == null)
+        parsed.entries
+    else
+        try std.mem.concat(arena.allocator(), xml.Entry, &.{ &.{search_row}, parsed.entries });
+
+    try feeds.append(gpa, .{ .arena = arena, .entries = entries, .next_url = parsed.next_url, .search = parsed.search });
+}
+
+/// Called by InkView when the keyboard of the search was closed, without a text if it was cancelled
+fn searchEntered(typed: [*c]u8) callconv(.c) void {
+    if (typed == null) return;
+    const text = std.mem.trim(u8, std.mem.span(typed), " ");
+    trace("search [{s}]\n", .{text});
+
+    if (text.len > 0) {
+        loadSearch(text) catch |err| switch (err) {
+            error.EmptyFeed => pb.Message(pb.ICON_INFORMATION, app_title, "Nothing found.", 3000),
+            else => pocketbook.showError("Could not search the catalog", err),
+        };
+    }
+    showList();
+}
+
+/// Loads the results for `text` and puts them on top as a new list
+fn loadSearch(text: []const u8) !void {
+    const feed = &feeds.items[feeds.items.len - 1];
+    const how = feed.search orelse return;
+
+    const template = switch (how) {
+        .template => |template| template,
+        .description => |file_url| found: {
+            if (!pocketbook.ensureNetwork()) return error.NoNetwork;
+            const body = try net.fetch(gpa, file_url);
+            defer gpa.free(body);
+
+            const template = try search.readDescription(feed.arena.allocator(), body, file_url);
+            // Kept, so the description file is loaded only once per list
+            feed.search = .{ .template = template };
+            break :found template;
+        },
+    };
+
+    const url = try search.fill(gpa, template, text);
+    defer gpa.free(url);
+    // Pushes onto feeds, `feed` must not be used afterwards
+    try loadFeed(url);
 }
 
 /// Called by InkView shortly after the last loaded entry was painted.
@@ -345,7 +402,9 @@ fn loadMoreTimer() callconv(.c) void {
     const feed = &feeds.items[feeds.items.len - 1];
     if (feed.next_url == null) return;
 
-    pb.ShowHourglass();
+    // Use InkViews forced version to show the hourglass.
+    // It did not work with the normal one.
+    pb.ShowHourglassForce();
     const loaded = if (pocketbook.ensureNetwork()) feed.loadMore() else error.NoNetwork;
     pb.HideHourglass();
 
@@ -356,7 +415,7 @@ fn loadMoreTimer() callconv(.c) void {
         pocketbook.showError("Could not load more entries", err);
         return;
     };
-    pb.OpenList(APP_TITLE, null, pb.ScreenWidth(), item_height, @intCast(feed.entries.len), feed.top, listHandler);
+    pb.OpenList(app_title, null, pb.ScreenWidth(), item_height, @intCast(feed.entries.len), feed.top, listHandler);
 }
 
 pub fn main() void {

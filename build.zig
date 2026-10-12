@@ -4,10 +4,10 @@ const std = @import("std");
 ///   - Show the app on the PocketReader menu (touch on it)
 ///   - Inside the application as the header
 ///   - Task switcher
-const APP_NAME = "OPDS Connector";
+const app_name = "OPDS Connector";
 
 /// The version of the app. Needed for the User-Agent
-const VERSION = @import("build.zig.zon").version;
+const version = @import("build.zig.zon").version;
 
 /// PocketBook's hardware families run the same firmware but differ in how their system
 /// libraries pass floating point values, and a binary only loads on the matching kind.
@@ -46,7 +46,7 @@ pub fn build(b: *std.Build) void {
     translate_c.addIncludePath(b.path("include"));
 
     const exe = b.addExecutable(.{
-        .name = APP_NAME ++ ".app",
+        .name = app_name ++ ".app",
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/main.zig"),
             .target = target,
@@ -56,8 +56,8 @@ pub fn build(b: *std.Build) void {
     });
 
     const options = b.addOptions();
-    options.addOption([:0]const u8, "appName", APP_NAME);
-    options.addOption([]const u8, "version", VERSION);
+    options.addOption([:0]const u8, "app_name", app_name);
+    options.addOption([]const u8, "version", version);
     exe.root_module.addOptions("build_options", options);
 
     exe.root_module.addImport("c", translate_c.createModule());
