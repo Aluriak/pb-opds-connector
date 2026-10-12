@@ -3,6 +3,7 @@ const net = @import("net.zig");
 const xml = @import("xml.zig");
 const server_form = @import("server_form.zig");
 const download = @import("download.zig");
+const search = @import("search.zig");
 const pocketbook = @import("pocketbook.zig");
 const trace = pocketbook.trace;
 
@@ -29,6 +30,8 @@ const Feed = struct {
     next_url: ?[:0]const u8 = null,
     /// First entry of the screen the list currently shows
     top: c_int = 0,
+    /// How the catalog of this list is searched. If set, the first entry is the "Search" row
+    search: ?search.Search = null,
 
     /// Appends the next page of the catalog to the entries
     fn loadMore(feed: *Feed) !void {
@@ -68,6 +71,8 @@ var server_index: ?usize = null;
 var delete_text: [128]u8 = undefined;
 /// Set while the next page of a list is waiting to be loaded
 var more_pending = false;
+/// InkView writes what the user types on the keyboard into this
+var search_text: [128]u8 = undefined;
 
 // The menu of a custom server. InkView keeps pointers into it while the menu is open
 var server_menu: [4]pb.imenu = undefined;
@@ -172,7 +177,10 @@ fn listHandler(action: c_int, x: c_int, y: c_int, idx: c_int, state: c_int) call
                 }
             }
 
-            if (entry.downloads.len > 0) {
+            if (feed.search != null and idx == 0) {
+                search_text[0] = 0;
+                pb.OpenKeyboard("Search", &search_text, search_text.len - 1, pb.KBD_NORMAL, searchEntered);
+            } else if (entry.downloads.len > 0) {
                 download.start(entry);
             } else if (entry.nav_url) |url| {
                 // Pushes onto feeds, `feed` must not be used afterwards
@@ -319,7 +327,9 @@ fn openFeed(url: [:0]const u8) void {
 fn loadFeed(url: [:0]const u8) !void {
     if (!pocketbook.ensureNetwork()) return error.NoNetwork;
 
-    pb.ShowHourglass();
+    // Use InkViews forced version to show the hourglass.
+    // It did not work with the normal one.
+    pb.ShowHourglassForce();
     defer pb.HideHourglass();
 
     trace("network ok, fetching\n", .{});
@@ -334,7 +344,54 @@ fn loadFeed(url: [:0]const u8) !void {
     trace("parsed {d} entries, next={?s}\n", .{ parsed.entries.len, parsed.next_url });
     if (parsed.entries.len == 0) return error.EmptyFeed;
 
-    try feeds.append(gpa, .{ .arena = arena, .entries = parsed.entries, .next_url = parsed.next_url });
+    // A catalog that can be searched gets the "Search" row in front
+    const search_row: xml.Entry = .{ .title = "Search", .summary = "Search this catalog" };
+    const entries = if (parsed.search == null)
+        parsed.entries
+    else
+        try std.mem.concat(arena.allocator(), xml.Entry, &.{ &.{search_row}, parsed.entries });
+
+    try feeds.append(gpa, .{ .arena = arena, .entries = entries, .next_url = parsed.next_url, .search = parsed.search });
+}
+
+/// Called by InkView when the keyboard of the search was closed, without a text if it was cancelled
+fn searchEntered(typed: [*c]u8) callconv(.c) void {
+    if (typed == null) return;
+    const text = std.mem.trim(u8, std.mem.span(typed), " ");
+    trace("search [{s}]\n", .{text});
+
+    if (text.len > 0) {
+        loadSearch(text) catch |err| switch (err) {
+            error.EmptyFeed => pb.Message(pb.ICON_INFORMATION, app_title, "Nothing found.", 3000),
+            else => pocketbook.showError("Could not search the catalog", err),
+        };
+    }
+    showList();
+}
+
+/// Loads the results for `text` and puts them on top as a new list
+fn loadSearch(text: []const u8) !void {
+    const feed = &feeds.items[feeds.items.len - 1];
+    const how = feed.search orelse return;
+
+    const template = switch (how) {
+        .template => |template| template,
+        .description => |file_url| found: {
+            if (!pocketbook.ensureNetwork()) return error.NoNetwork;
+            const body = try net.fetch(gpa, file_url);
+            defer gpa.free(body);
+
+            const template = try search.readDescription(feed.arena.allocator(), body, file_url);
+            // Kept, so the description file is loaded only once per list
+            feed.search = .{ .template = template };
+            break :found template;
+        },
+    };
+
+    const url = try search.fill(gpa, template, text);
+    defer gpa.free(url);
+    // Pushes onto feeds, `feed` must not be used afterwards
+    try loadFeed(url);
 }
 
 /// Called by InkView shortly after the last loaded entry was painted.
@@ -345,7 +402,9 @@ fn loadMoreTimer() callconv(.c) void {
     const feed = &feeds.items[feeds.items.len - 1];
     if (feed.next_url == null) return;
 
-    pb.ShowHourglass();
+    // Use InkViews forced version to show the hourglass.
+    // It did not work with the normal one.
+    pb.ShowHourglassForce();
     const loaded = if (pocketbook.ensureNetwork()) feed.loadMore() else error.NoNetwork;
     pb.HideHourglass();
 

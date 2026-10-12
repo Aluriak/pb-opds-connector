@@ -1,17 +1,17 @@
 const std = @import("std");
 const zigxml = @import("xml");
 const utils = @import("utils.zig");
+const Search = @import("search.zig").Search;
 
-const REL_ACQUISITION = "http://opds-spec.org/acquisition";
-const TYPE_ATOM = "application/atom+xml";
+const rel_acquisition = "http://opds-spec.org/acquisition";
 
-const MAX_AUTHOR_IN_FILENAME = 60;
-const MAX_TITLE_IN_FILENAME = 120;
+const max_author_in_filename = 60;
+const max_title_in_filename = 120;
 /// "<author> - <title>.<ext>" at its longest
-pub const MAX_FILENAME = MAX_AUTHOR_IN_FILENAME + " - ".len + MAX_TITLE_IN_FILENAME + ".fb2.zip".len;
+pub const max_filename = max_author_in_filename + " - ".len + max_title_in_filename + ".fb2.zip".len;
 
 /// Upper bound per entry, so the format menu always fits on the screen
-pub const MAX_DOWNLOADS = 8;
+pub const max_downloads = 8;
 
 pub const BookFormat = enum {
     epub,
@@ -124,16 +124,16 @@ pub const Entry = struct {
         // Different feeds use different fields:
         //   - Standard Books: Plain atom - enclosure
         //   - Others: XML feed - acquisition
-        const is_acquisition = std.mem.startsWith(u8, rel, REL_ACQUISITION) or std.mem.eql(u8, rel, "enclosure");
+        const is_acquisition = std.mem.startsWith(u8, rel, rel_acquisition) or std.mem.eql(u8, rel, "enclosure");
         // Unknown types (e.g. text/html shop pages) are not downloadable books
         const format = if (is_acquisition) BookFormat.fromMime(mime) orelse return else null;
-        if (!is_acquisition and !std.mem.startsWith(u8, mime, TYPE_ATOM)) return;
+        if (!is_acquisition and !std.mem.startsWith(u8, mime, LinkType.atom.mime())) return;
 
         const href = try reader.attributeValueAlloc(allocator, href_index);
         defer allocator.free(href);
 
         if (is_acquisition) {
-            if (downloads.items.len >= MAX_DOWNLOADS) return;
+            if (downloads.items.len >= max_downloads) return;
 
             try downloads.append(allocator, .{
                 .url = try resolveUrl(allocator, base, href),
@@ -153,14 +153,14 @@ pub const Entry = struct {
     }
 
     /// Builds the name a download of this entry is saved under: "<author> - <title>.<ext>".
-    pub fn saveName(entry: Entry, buf: *[MAX_FILENAME]u8, format: BookFormat) []const u8 {
-        var len = utils.cleanName(buf[0..MAX_AUTHOR_IN_FILENAME], entry.author, true);
+    pub fn saveName(entry: Entry, buf: *[max_filename]u8, format: BookFormat) []const u8 {
+        var len = utils.cleanName(buf[0..max_author_in_filename], entry.author, true);
         if (len > 0) {
             @memcpy(buf[len..][0..3], " - ");
             len += 3;
         }
 
-        const title_len = utils.cleanName(buf[len..][0..MAX_TITLE_IN_FILENAME], entry.title, false);
+        const title_len = utils.cleanName(buf[len..][0..max_title_in_filename], entry.title, false);
         if (title_len > 0) {
             len += title_len;
         } else {
@@ -173,18 +173,41 @@ pub const Entry = struct {
     }
 };
 
+/// The kinds of search link a feed can have.
+const LinkType = enum {
+    atom,
+    opensearch,
+
+    fn mime(kind: LinkType) []const u8 {
+        return switch (kind) {
+            .atom => "application/atom+xml",
+            .opensearch => "application/opensearchdescription+xml",
+        };
+    }
+
+    fn fromMime(text: []const u8) ?LinkType {
+        inline for (comptime std.enums.values(LinkType)) |kind| {
+            if (std.mem.startsWith(u8, text, kind.mime())) return kind;
+        }
+        return null;
+    }
+};
+
 /// This mirrors the structure of feed element defined for the opds.
 /// See: https://specs.opds.io/opds-1.1.html
 pub const Feed = struct {
+    base_uri: std.Uri,
     entries: []Entry = &.{},
     /// Catalogs deliver long lists in pages, this is the address of the next one
     next_url: ?[:0]const u8 = null,
+    /// How the catalog can be searched, null if it offers no search
+    search: ?Search = null,
 
     fn setEntries(feed: *Feed, allocator: std.mem.Allocator, entries: *std.ArrayList(Entry)) !void {
         feed.entries = try entries.toOwnedSlice(allocator);
     }
 
-    fn readNextPageLink(feed: *Feed, allocator: std.mem.Allocator, reader: *zigxml.Reader, base: std.Uri) !void {
+    fn readNextPageLink(feed: *Feed, allocator: std.mem.Allocator, reader: *zigxml.Reader) !void {
         const rel = if (reader.attributeIndex("rel")) |i| reader.attributeValueRaw(i) else "";
         if (!std.mem.eql(u8, rel, "next")) return;
 
@@ -192,16 +215,38 @@ pub const Feed = struct {
         const href = try reader.attributeValueAlloc(allocator, href_index);
         defer allocator.free(href);
 
-        feed.next_url = try resolveUrl(allocator, base, href);
+        feed.next_url = try resolveUrl(allocator, feed.base_uri, href);
+    }
+
+    /// A feed may give the address for a search directly, point to a description file
+    /// that contains it, or do both. The direct address is preferred, as no file needs to be loaded.
+    fn readSearchLink(feed: *Feed, allocator: std.mem.Allocator, reader: *zigxml.Reader) !void {
+        const rel = if (reader.attributeIndex("rel")) |i| reader.attributeValueRaw(i) else "";
+        if (!std.mem.eql(u8, rel, "search")) return;
+
+        const mime = if (reader.attributeIndex("type")) |i| reader.attributeValueRaw(i) else "";
+        const kind = LinkType.fromMime(mime) orelse return;
+        if (feed.search) |found| {
+            if (found == .template or kind == .opensearch) return;
+        }
+
+        const href_index = reader.attributeIndex("href") orelse return;
+        const href = try reader.attributeValueAlloc(allocator, href_index);
+        defer allocator.free(href);
+        if (kind == .atom and std.mem.indexOf(u8, href, "{searchTerms}") == null) return;
+
+        const url = try resolveUrl(allocator, feed.base_uri, href);
+        feed.search = switch (kind) {
+            .atom => .{ .template = url },
+            .opensearch => .{ .description = url },
+        };
     }
 };
 
 /// All strings of the returned entries are allocated with `allocator` and never freed
 /// individually, so pass an arena.
-pub fn parseOPDSFeed(allocator: std.mem.Allocator, xml_data: []const u8, base_url: []const u8) !Feed {
-    const base = try std.Uri.parse(base_url);
-
-    var feed: Feed = .{};
+pub fn parseOpdsFeed(allocator: std.mem.Allocator, xml_data: []const u8, base_url: []const u8) !Feed {
+    var feed: Feed = .{ .base_uri = try std.Uri.parse(base_url) };
     var entries: std.ArrayList(Entry) = .empty;
     errdefer entries.deinit(allocator);
 
@@ -230,7 +275,10 @@ pub fn parseOPDSFeed(allocator: std.mem.Allocator, xml_data: []const u8, base_ur
                 }
 
                 const entry = if (current) |*e| e else {
-                    if (std.mem.eql(u8, name, "link")) try feed.readNextPageLink(allocator, reader, base);
+                    if (std.mem.eql(u8, name, "link")) {
+                        try feed.readNextPageLink(allocator, reader);
+                        try feed.readSearchLink(allocator, reader);
+                    }
                     continue;
                 };
 
@@ -247,7 +295,7 @@ pub fn parseOPDSFeed(allocator: std.mem.Allocator, xml_data: []const u8, base_ur
                         entry.summary = try readText(allocator, reader);
                     }
                 } else if (std.mem.eql(u8, name, "link")) {
-                    try entry.readLink(allocator, reader, base, &downloads);
+                    try entry.readLink(allocator, reader, feed.base_uri, &downloads);
                 }
             },
             .element_end => {
@@ -283,7 +331,7 @@ fn sameBook(entries: []Entry, entry: Entry, downloads: []const Download) ?*Entry
 
     const previous = &entries[entries.len - 1];
     if (previous.downloads.len == 0) return null;
-    if (previous.downloads.len + downloads.len > MAX_DOWNLOADS) return null;
+    if (previous.downloads.len + downloads.len > max_downloads) return null;
     if (!std.mem.eql(u8, previous.title, entry.title)) return null;
     if (!std.mem.eql(u8, previous.author, entry.author)) return null;
 
@@ -297,7 +345,7 @@ fn readText(allocator: std.mem.Allocator, reader: *zigxml.Reader) ![:0]const u8 
 }
 
 /// Feeds mostly use relative hrefs, resolve them against the URL of the feed.
-fn resolveUrl(allocator: std.mem.Allocator, base: std.Uri, href: []const u8) ![:0]const u8 {
+pub fn resolveUrl(allocator: std.mem.Allocator, base: std.Uri, href: []const u8) ![:0]const u8 {
     // resolveInPlace needs room behind the href for the merged path
     const buf = try allocator.alloc(u8, href.len * 2 + base.path.percent_encoded.len + 1);
     defer allocator.free(buf);
@@ -311,7 +359,7 @@ fn resolveUrl(allocator: std.mem.Allocator, base: std.Uri, href: []const u8) ![:
 
 /// TEST
 fn expectSaveName(expected: []const u8, entry: Entry, format: BookFormat) !void {
-    var buf: [MAX_FILENAME]u8 = undefined;
+    var buf: [max_filename]u8 = undefined;
     try std.testing.expectEqualStrings(expected, entry.saveName(&buf, format));
 }
 
@@ -350,11 +398,11 @@ test "saveName cuts long authors and titles to fit its buffer" {
     const author: [100:0]u8 = @splat('a');
     const title: [300:0]u8 = @splat('t');
 
-    var buf: [MAX_FILENAME]u8 = undefined;
+    var buf: [max_filename]u8 = undefined;
     const name = (Entry{ .author = &author, .title = &title }).saveName(&buf, .fb2_zip);
 
     // 60 for the author, " - ", 120 for the title, ".fb2.zip": exactly the buffer
-    try std.testing.expectEqual(MAX_FILENAME, name.len);
+    try std.testing.expectEqual(max_filename, name.len);
     try std.testing.expectEqual(60, std.mem.count(u8, name, "a"));
     try std.testing.expectEqual(120, std.mem.count(u8, name, "t"));
     try std.testing.expect(std.mem.endsWith(u8, name, "t.fb2.zip"));
@@ -433,4 +481,45 @@ test "description falls back to a short text when it does not fit" {
     const download: Download = .{ .url = "", .format = .epub, .label = "A label that is far too long" };
 
     try std.testing.expectEqualStrings("Download", download.description(&buf));
+}
+
+fn expectSearch(expected: ?Search, links: []const u8) !void {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const data = try std.fmt.allocPrint(arena.allocator(), "<feed xmlns=\"http://www.w3.org/2005/Atom\">{s}</feed>", .{links});
+    const feed = try parseOpdsFeed(arena.allocator(), data, "http://calibre.lan:8080/opds");
+    try std.testing.expectEqualDeep(expected, feed.search);
+}
+
+test "a feed without a search link offers no search" {
+    try expectSearch(null, "<link rel=\"start\" type=\"application/atom+xml\" href=\"/opds\"/>");
+}
+
+test "the search address of a feed is completed with the server" {
+    try expectSearch(
+        .{ .template = "http://calibre.lan:8080/opds/search/{searchTerms}" },
+        "<link rel=\"search\" type=\"application/atom+xml\" href=\"/opds/search/{searchTerms}\"/>",
+    );
+}
+
+test "a feed may point to a description file for its search" {
+    try expectSearch(
+        .{ .description = "https://www.gutenberg.org/catalog/osd-books.xml" },
+        "<link rel=\"search\" type=\"application/opensearchdescription+xml\" href=\"https://www.gutenberg.org/catalog/osd-books.xml\"/>",
+    );
+}
+
+test "the direct search address wins over the description file, in any order" {
+    const direct = "<link rel=\"search\" type=\"application/atom+xml\" href=\"/opds/search?searchTerm={searchTerms}\"/>";
+    const file = "<link rel=\"search\" type=\"application/opensearchdescription+xml\" href=\"/opds-opensearch.xml\"/>";
+    const expected: Search = .{ .template = "http://calibre.lan:8080/opds/search?searchTerm={searchTerms}" };
+
+    try expectSearch(expected, file ++ direct);
+    try expectSearch(expected, direct ++ file);
+}
+
+test "a search link of an unknown kind is ignored" {
+    try expectSearch(null, "<link rel=\"search\" type=\"text/html\" href=\"/search?q={searchTerms}\"/>");
+    try expectSearch(null, "<link rel=\"search\" type=\"application/atom+xml\" href=\"/opds/all\"/>");
 }

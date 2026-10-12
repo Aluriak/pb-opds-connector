@@ -12,6 +12,7 @@ An OPDS connector for PocketBook e-readers. Browse catalogs and download books s
     * ManyBooks
     * Gutenberg
     * Standard Ebooks
+* [**Search:**](#search) Catalogs that offer a search show a "Search" row at the top of each list.
 * **Format selection:** Choose from the formats a catalog offers. A progress bar shows the download.
 * **Download handling:** Books are saved to the Downloads folder and show up in the library right away, without a restart.
 
@@ -58,6 +59,22 @@ Press and hold a server you added, then choose "Edit" or "Delete". The built-in 
 
 * The user name and password are stored unencrypted on the reader, in `system/config/opds-connector.cfg`. Anyone with access to the reader's storage can read them.
 * They are only sent to the server you entered, never to another server a catalog links to.
+
+## Search
+
+Many catalogs can be searched. If a catalog offers this, every list inside it starts with a "Search" row.
+
+1. Open the "Search" row.
+2. Type what you are looking for and confirm.
+3. The results open as a new list. From there you can download books, open sub-lists or search again. The back button returns to the list you came from.
+
+**Good to know**
+
+* The search is done by the catalog, not by the app. What is searched (titles, authors, descriptions) and how the results are sorted depends on the catalog. Some catalogs, like Flibusta, first ask whether you want to search books or authors.
+* A catalog without a search has no "Search" row. The start screen has none either: there is no search across all catalogs at once.
+* If nothing matches, the app shows "Nothing found." and stays on the current list.
+* This also works for servers you added yourself, as long as they offer a search. Calibre and Calibre-Web do.
+
 
 ## Compatibility
 
