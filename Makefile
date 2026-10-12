@@ -1,5 +1,9 @@
 # Platform enum in build.zig
 PLATFORMS := allwinner rk3566
+# Mountpoint of the reader device
+DEVICE ?= /Volumes/PB710
+# Applicaton name, see build.zig
+APP := OPDS Connector.app
 
 ## help: print this help message
 .PHONY: help
@@ -44,3 +48,10 @@ fmt-fix:
 .PHONY: test
 test:
 	zig build test --summary all
+
+## install: copy the executable from zig-out/bin to the connected reader
+.PHONY: install
+install:
+	@test -d "$(DEVICE)/applications" || { echo "No reader found at $(DEVICE)"; exit 1; }
+	cp -X "zig-out/bin/$(APP)" "$(DEVICE)/applications/$(APP)"
+	@rm -f "$(DEVICE)/applications/._$(APP)"
