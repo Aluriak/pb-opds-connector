@@ -73,11 +73,11 @@ const ServerFields = struct {
     }
 };
 
-var formRows = ServerFields.getFormRows();
+var form_rows = ServerFields.getFormRows();
 
 /// Shows the "Add server" form
 pub fn open(gpa: std.mem.Allocator, server: ?Server, done: DoneFn) void {
-    const cfg = pb.OpenConfig(configuration.CONFIG_PATH, null) orelse {
+    const cfg = pb.OpenConfig(configuration.config_path, null) orelse {
         pocketbook.showError("Could not open the form", error.NoSettingsFile);
         return;
     };
@@ -89,7 +89,7 @@ pub fn open(gpa: std.mem.Allocator, server: ?Server, done: DoneFn) void {
     on_done = done;
 
     const title = if (server == null) "Add server" else "Edit server";
-    pb.OpenConfigEditor(title, cfg, &formRows, @ptrCast(&closed), changed);
+    pb.OpenConfigEditor(title, cfg, &form_rows, @ptrCast(&closed), changed);
 }
 
 /// Called by InkView for every field the user changed

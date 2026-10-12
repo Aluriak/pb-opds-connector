@@ -3,7 +3,7 @@ const std = @import("std");
 const curl = @import("libcurl.zig");
 const Server = @import("server.zig").Server;
 
-const USER_AGENT = "pb-opds-connector/" ++ @import("build_options").version;
+const user_agent = "pb-opds-connector/" ++ @import("build_options").version;
 
 /// The custom server the user is browsing, null for the built-in catalogs
 var server: ?Server = null;
@@ -12,7 +12,7 @@ var server: ?Server = null;
 /// or 0 if the server does not say.
 pub const ProgressFn = *const fn (downloaded: u64, total: u64) void;
 
-var currentProgress: ?ProgressFn = null;
+var current_progress: ?ProgressFn = null;
 
 const Buffer = struct {
     allocator: std.mem.Allocator,
@@ -41,7 +41,7 @@ fn curlWriteBuffer(ptr: [*]const u8, size: usize, nmemb: usize, userdata: *anyop
 }
 
 fn curlProgress(_: ?*anyopaque, dltotal: i64, dlnow: i64, _: i64, _: i64) callconv(.c) c_int {
-    if (currentProgress) |report| report(@intCast(@max(dlnow, 0)), @intCast(@max(dltotal, 0)));
+    if (current_progress) |report| report(@intCast(@max(dlnow, 0)), @intCast(@max(dltotal, 0)));
     // Anything but 0 aborts the transfer
     return 0;
 }
@@ -51,7 +51,7 @@ fn perform(url: [:0]const u8, target: Target) !void {
     defer curl.curl_easy_cleanup(handle);
 
     _ = curl.curl_easy_setopt(handle, curl.CURLOPT_URL, url.ptr);
-    _ = curl.curl_easy_setopt(handle, curl.CURLOPT_USERAGENT, USER_AGENT);
+    _ = curl.curl_easy_setopt(handle, curl.CURLOPT_USERAGENT, user_agent);
     _ = curl.curl_easy_setopt(handle, curl.CURLOPT_TIMEOUT, @as(c_long, 120));
     _ = curl.curl_easy_setopt(handle, curl.CURLOPT_CONNECTTIMEOUT, @as(c_long, 5));
     _ = curl.curl_easy_setopt(handle, curl.CURLOPT_FOLLOWLOCATION, @as(c_long, 1));
@@ -77,7 +77,7 @@ fn perform(url: [:0]const u8, target: Target) !void {
         .file => |file| _ = curl.curl_easy_setopt(handle, curl.CURLOPT_WRITEDATA, file),
     }
 
-    if (currentProgress != null) {
+    if (current_progress != null) {
         _ = curl.curl_easy_setopt(handle, curl.CURLOPT_NOPROGRESS, @as(c_long, 0));
         _ = curl.curl_easy_setopt(handle, curl.CURLOPT_XFERINFOFUNCTION, &curlProgress);
     }
@@ -106,23 +106,23 @@ pub fn fetch(allocator: std.mem.Allocator, url: [:0]const u8) ![]u8 {
 /// Download streams the data from an URL into a file.
 /// It shares the general settings like User-Agent and more with the `fetch`
 /// function.
-pub fn download(url: [:0]const u8, targetDir: []const u8, filename: []const u8, on_progress: ?ProgressFn) !void {
-    currentProgress = on_progress;
-    defer currentProgress = null;
+pub fn download(url: [:0]const u8, target_dir: []const u8, filename: []const u8, on_progress: ?ProgressFn) !void {
+    current_progress = on_progress;
+    defer current_progress = null;
 
-    var pathBuf: [384]u8 = undefined;
-    const targetPath = try std.fmt.bufPrintSentinel(&pathBuf, "{s}/{s}", .{ targetDir, filename }, 0);
+    var path_buf: [384]u8 = undefined;
+    const target_path = try std.fmt.bufPrintSentinel(&path_buf, "{s}/{s}", .{ target_dir, filename }, 0);
 
-    const fh = std.c.fopen(targetPath.ptr, "wb") orelse return error.CannotOpenFileForWriting;
+    const fh = std.c.fopen(target_path.ptr, "wb") orelse return error.CannotOpenFileForWriting;
 
     perform(url, .{ .file = fh }) catch |err| {
         _ = std.c.fclose(fh);
-        _ = std.c.unlink(targetPath.ptr);
+        _ = std.c.unlink(target_path.ptr);
         return err;
     };
 
     if (std.c.fclose(fh) != 0) {
-        _ = std.c.unlink(targetPath.ptr);
+        _ = std.c.unlink(target_path.ptr);
         return error.CannotWriteFile;
     }
 }

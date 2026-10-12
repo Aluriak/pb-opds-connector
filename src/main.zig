@@ -11,9 +11,9 @@ const Server = @import("server.zig").Server;
 
 const pb = @import("c");
 
-const APP_TITLE = @import("build_options").appName;
+const app_title = @import("build_options").app_name;
 
-const CATALOGS = [_]xml.Entry{
+const catalogs = [_]xml.Entry{
     .{ .title = "Flibusta", .author = "flibusta.is", .nav_url = "http://flibusta.is/opds" },
     .{ .title = "Standard Ebooks (new releases)", .author = "standardebooks.org", .nav_url = "https://standardebooks.org/feeds/atom/new-releases" },
     .{ .title = "ManyBooks", .author = "manybooks.net", .nav_url = "https://manybooks.net/opds/index.php" },
@@ -38,7 +38,7 @@ const Feed = struct {
         defer gpa.free(body);
 
         const allocator = feed.arena.allocator();
-        const parsed = try xml.parseOPDSFeed(allocator, body, url);
+        const parsed = try xml.parseOpdsFeed(allocator, body, url);
 
         feed.entries = try std.mem.concat(allocator, xml.Entry, &.{ feed.entries, parsed.entries });
         feed.next_url = if (parsed.entries.len == 0) null else parsed.next_url;
@@ -77,7 +77,7 @@ fn mainHandler(event_type: c_int, par1: c_int, par2: c_int) callconv(.c) c_int {
 
     switch (event_type) {
         pb.EVT_INIT => {
-            _ = pb.SetSubtaskInfo(pb.GetCurrentTask(), 0, APP_TITLE, null);
+            _ = pb.SetSubtaskInfo(pb.GetCurrentTask(), 0, app_title, null);
 
             item_height = @divTrunc(pb.ScreenHeight(), 10);
             padding = @divTrunc(item_height, 8);
@@ -178,14 +178,14 @@ fn listHandler(action: c_int, x: c_int, y: c_int, idx: c_int, state: c_int) call
                 // Pushes onto feeds, `feed` must not be used afterwards
                 openFeed(url);
             } else {
-                pb.Message(pb.ICON_INFORMATION, APP_TITLE, "Nothing to open for this entry.", 3000);
+                pb.Message(pb.ICON_INFORMATION, app_title, "Nothing to open for this entry.", 3000);
             }
         },
         pb.LIST_MENU => {
             // Long press or menu key: custom servers can be deleted
             if (feeds.items.len != 1 or idx < 0 or idx >= feed.entries.len) return 0;
             if (catalogRow(@intCast(idx)) != .custom) return 0;
-            openServerMenu(@as(usize, @intCast(idx)) - CATALOGS.len);
+            openServerMenu(@as(usize, @intCast(idx)) - catalogs.len);
         },
         // Handle the "back" action of a user, f. ex. clicking the _back_ button.
         // This can lead to the previous screen or closing the app.
@@ -212,22 +212,22 @@ fn listHandler(action: c_int, x: c_int, y: c_int, idx: c_int, state: c_int) call
 
 fn showList() void {
     const feed = &feeds.items[feeds.items.len - 1];
-    pb.OpenList(APP_TITLE, null, pb.ScreenWidth(), item_height, @intCast(feed.entries.len), feed.pos, listHandler);
+    pb.OpenList(app_title, null, pb.ScreenWidth(), item_height, @intCast(feed.entries.len), feed.pos, listHandler);
 }
 
 const CatalogRow = union(enum) { builtin, custom: Server, add };
 
 /// What a row of the start screen is. The order is the one rebuildCatalogRows puts them in.
 fn catalogRow(row: usize) CatalogRow {
-    if (row < CATALOGS.len) return .builtin;
-    if (row < CATALOGS.len + custom_servers.items.len) return .{ .custom = custom_servers.items[row - CATALOGS.len] };
+    if (row < catalogs.len) return .builtin;
+    if (row < catalogs.len + custom_servers.items.len) return .{ .custom = custom_servers.items[row - catalogs.len] };
     return .add;
 }
 
 /// Puts the start screen together again after servers were loaded, added or deleted
 fn rebuildCatalogRows() !void {
     catalog_rows.clearRetainingCapacity();
-    try catalog_rows.appendSlice(gpa, &CATALOGS);
+    try catalog_rows.appendSlice(gpa, &catalogs);
     for (custom_servers.items) |server| {
         try catalog_rows.append(gpa, .{ .title = server.name, .author = server.url, .nav_url = server.url });
     }
@@ -260,7 +260,7 @@ fn serverMenuHandler(index: c_int) callconv(.c) void {
         2 => {
             const name = custom_servers.items[selected].name;
             const text = std.fmt.bufPrintSentinel(&delete_text, "Delete the server \"{s}\"?", .{name}, 0) catch "Delete this server?";
-            pb.Dialog(pb.ICON_QUESTION, APP_TITLE, text.ptr, "Delete", "Cancel", deleteAnswered);
+            pb.Dialog(pb.ICON_QUESTION, app_title, text.ptr, "Delete", "Cancel", deleteAnswered);
         },
         // Anything else means the menu was closed without a choice
         else => {},
@@ -330,7 +330,7 @@ fn loadFeed(url: [:0]const u8) !void {
     var arena = std.heap.ArenaAllocator.init(gpa);
     errdefer arena.deinit();
 
-    const parsed = try xml.parseOPDSFeed(arena.allocator(), body, url);
+    const parsed = try xml.parseOpdsFeed(arena.allocator(), body, url);
     trace("parsed {d} entries, next={?s}\n", .{ parsed.entries.len, parsed.next_url });
     if (parsed.entries.len == 0) return error.EmptyFeed;
 
@@ -356,7 +356,7 @@ fn loadMoreTimer() callconv(.c) void {
         pocketbook.showError("Could not load more entries", err);
         return;
     };
-    pb.OpenList(APP_TITLE, null, pb.ScreenWidth(), item_height, @intCast(feed.entries.len), feed.top, listHandler);
+    pb.OpenList(app_title, null, pb.ScreenWidth(), item_height, @intCast(feed.entries.len), feed.top, listHandler);
 }
 
 pub fn main() void {

@@ -2,7 +2,7 @@ const builtin = @import("builtin");
 const std = @import("std");
 const pb = @import("c");
 
-const APP_TITLE = @import("build_options").appName;
+const app_title = @import("build_options").app_name;
 
 pub fn ensureNetwork() bool {
     if (pb.QueryNetwork() & pb.NET_CONNECTED != 0) return true;
@@ -37,5 +37,5 @@ pub fn trace(comptime fmt: []const u8, args: anytype) void {
 pub fn showError(text: []const u8, err: anyerror) void {
     var buf: [256]u8 = undefined;
     const msg = std.fmt.bufPrintSentinel(&buf, "{s} ({s})", .{ text, @errorName(err) }, 0) catch "Error";
-    pb.Message(pb.ICON_ERROR, APP_TITLE, msg.ptr, 5000);
+    pb.Message(pb.ICON_ERROR, app_title, msg.ptr, 5000);
 }
