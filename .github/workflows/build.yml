@@ -1,5 +1,6 @@
-# Checks and builds the app on every push. The "OPDS Connector.app" files of both
-# platforms can be downloaded from the run page, under "Artifacts".
+# Checks and builds the app on every push. Each push to main replaces the "nightly"
+# release, so the latest build is always at the same address:
+# https://github.com/<owner>/<repo>/releases/download/nightly/opds-connector-<platform>.zip
 name: Build
 
 on:
@@ -11,6 +12,14 @@ env:
   ZIG_VERSION: 0.17.0
   # Keeps the downloaded dependencies (zig-xml) between runs
   ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}/.zig-global-cache
+
+permissions:
+  contents: write
+
+# Two pushes in a row must not replace the nightly release at the same time
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
@@ -50,30 +59,30 @@ jobs:
             cp scripts/opds-debug.app zig-out/debug-$platform/bin/
           done
 
-      - name: Upload allwinner
+      - name: Package
+        run: |
+          mkdir -p dist
+          for platform in allwinner rk3566; do
+            (cd zig-out/$platform/bin && zip -9 "$GITHUB_WORKSPACE/dist/opds-connector-$platform.zip" "OPDS Connector.app")
+            (cd zig-out/debug-$platform/bin && zip -9 "$GITHUB_WORKSPACE/dist/opds-connector-$platform-debug.zip" "OPDS Connector.bin" opds-debug.app)
+          done
+          ls -la dist
+
+      - name: Keep the files of this run
         uses: actions/upload-artifact@v4
         with:
-          name: opds-connector-${{ github.sha }}-allwinner
-          path: zig-out/allwinner/bin/OPDS Connector.app
+          name: opds-connector-${{ github.sha }}
+          path: dist/
           if-no-files-found: error
 
-      - name: Upload rk3566
-        uses: actions/upload-artifact@v4
-        with:
-          name: opds-connector-${{ github.sha }}-rk3566
-          path: zig-out/rk3566/bin/OPDS Connector.app
-          if-no-files-found: error
-
-      - name: Upload allwinner debug build
-        uses: actions/upload-artifact@v4
-        with:
-          name: opds-connector-${{ github.sha }}-allwinner-debug
-          path: zig-out/debug-allwinner/bin/
-          if-no-files-found: error
-
-      - name: Upload rk3566 debug build
-        uses: actions/upload-artifact@v4
-        with:
-          name: opds-connector-${{ github.sha }}-rk3566-debug
-          path: zig-out/debug-rk3566/bin/
-          if-no-files-found: error
+      - name: Publish as nightly release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete nightly --cleanup-tag --yes || true
+          gh release create nightly dist/*.zip \
+            --prerelease \
+            --target "$GITHUB_SHA" \
+            --title "Nightly build" \
+            --notes "Latest build of main, commit ${GITHUB_SHA::7}. Unzip and copy \`OPDS Connector.app\` into the \`applications\` folder of your PocketBook."

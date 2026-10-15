@@ -102,7 +102,7 @@ Many catalogs can be searched. If a catalog offers this, every list inside it st
 
 The app shows why a request failed: the HTTP status the server answered with, or what went wrong before an answer came. For more, use a debug build, which writes a log:
 
-1. Download the `…-<platform>-debug` artifact of a [build run](../../actions/workflows/build.yml), or build it yourself with `zig build -Dplatform=<platform>`.
+1. Download `opds-connector-<platform>-debug.zip` from the [nightly release](https://github.com/Aluriak/pb-opds-connector/releases/tag/nightly), or build it yourself with `zig build -Dplatform=<platform>`.
 2. Copy `OPDS Connector.bin` and `opds-debug.app` into the `applications` folder of the reader.
 3. Open "opds-debug" from the applications list instead of "OPDS Connector".
 4. The log is written to `opds-log.txt` at the top of the reader's storage.
