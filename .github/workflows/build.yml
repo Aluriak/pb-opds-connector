@@ -1,0 +1,56 @@
+# Checks and builds the app on every push. The "OPDS Connector.app" files of both
+# platforms can be downloaded from the run page, under "Artifacts".
+name: Build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+env:
+  ZIG_VERSION: 0.17.0
+  # Keeps the downloaded dependencies (zig-xml) between runs
+  ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}/.zig-global-cache
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v4
+
+      - name: Cache Zig dependencies
+        uses: actions/cache@v4
+        with:
+          path: .zig-global-cache
+          key: zig-${{ env.ZIG_VERSION }}-${{ hashFiles('build.zig.zon') }}
+
+      - name: Install Zig
+        run: |
+          curl -fsSL "https://ziglang.org/download/${ZIG_VERSION}/zig-$(uname -m)-linux-${ZIG_VERSION}.tar.xz" -o /tmp/zig.tar.xz
+          sudo mkdir -p /opt/zig
+          sudo tar -xJf /tmp/zig.tar.xz -C /opt/zig --strip-components=1
+          echo /opt/zig >> "$GITHUB_PATH"
+
+      - name: Format
+        run: make fmt-check
+
+      - name: Tests
+        run: make test
+
+      - name: Build
+        run: make build-all
+
+      - name: Upload allwinner
+        uses: actions/upload-artifact@v4
+        with:
+          name: opds-connector-${{ github.sha }}-allwinner
+          path: zig-out/allwinner/bin/OPDS Connector.app
+          if-no-files-found: error
+
+      - name: Upload rk3566
+        uses: actions/upload-artifact@v4
+        with:
+          name: opds-connector-${{ github.sha }}-rk3566
+          path: zig-out/rk3566/bin/OPDS Connector.app
+          if-no-files-found: error
