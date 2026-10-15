@@ -58,13 +58,13 @@ var author_font: ?*pb.ifont = null;
 /// A list of servers, that show up on the start screen
 var catalogs: Catalogs = .{};
 
-/// The custom server an action (delete, view) is ongoing for
+/// The server an action (edit, delete) is ongoing for
 var server_index: ?usize = null;
 /// Set while the next page of a list is waiting to be loaded
 var more_pending = false;
 /// InkView writes what the user types on the keyboard into this
 var search_text: [128]u8 = undefined;
-// The menu of a custom server. InkView keeps pointers into it while the menu is open
+// The menu of a server. InkView keeps pointers into it while the menu is open
 var server_menu: [4]pb.imenu = undefined;
 
 fn mainHandler(event_type: c_int, par1: c_int, par2: c_int) callconv(.c) c_int {
@@ -79,10 +79,6 @@ fn mainHandler(event_type: c_int, par1: c_int, par2: c_int) callconv(.c) c_int {
             title_font = pb.OpenFont(pb.iv_get_default_font(pb.FONT_BOLD), @divTrunc(item_height, 4), 1);
             author_font = pb.OpenFont(pb.iv_get_default_font(pb.FONT_STD), @divTrunc(item_height, 5), 1);
 
-            catalogs = Catalogs.init(gpa) catch {
-                pb.CloseApp();
-                return 0;
-            };
             configuration.load(gpa, &catalogs.servers) catch |err| trace("loading servers failed: {s}\n", .{@errorName(err)});
 
             // The catalog list is the bottom of the feed stack, so Back from a catalog returns here
@@ -177,9 +173,8 @@ fn listHandler(action: c_int, x: c_int, y: c_int, idx: c_int, state: c_int) call
             }
         },
         pb.LIST_MENU => {
-            // Long press or menu key: custom servers can be deleted
+            // Long press or menu key: servers can be edited or deleted
             if (feeds.items.len != 1 or idx < 0 or idx >= catalogs.servers.items.len) return 0;
-            if (catalogs.servers.items[@intCast(idx)].internal) return 0;
             server_index = @intCast(idx);
             openServerMenu();
         },
@@ -227,7 +222,7 @@ fn rebuildCatalogRows() !void {
     start_screen.pos = @min(start_screen.pos, @as(c_int, @intCast(rows.len - 1)));
 }
 
-/// Lets the user pick what to do with a server they added
+/// Lets the user pick what to do with a server
 fn openServerMenu() void {
     const server = catalogs.servers.items[server_index.?];
 
@@ -272,7 +267,7 @@ fn saveServer(entered: anyerror!?Server) !void {
         errdefer server.free(gpa);
         try catalogs.servers.append(gpa, server);
     }
-    configuration.store(catalogs.custom());
+    configuration.store(catalogs.servers.items);
     try rebuildCatalogRows();
 }
 
@@ -284,7 +279,7 @@ fn deleteAnswered(button: c_int) callconv(.c) void {
 
     catalogs.servers.orderedRemove(index).free(gpa);
     net.useServer(null);
-    configuration.store(catalogs.custom());
+    configuration.store(catalogs.servers.items);
     rebuildCatalogRows() catch return;
     showList();
 }

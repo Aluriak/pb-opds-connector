@@ -5,7 +5,7 @@ const Server = @import("server.zig").Server;
 
 const user_agent = "pb-opds-connector/" ++ @import("build_options").version;
 
-/// The custom server the user is browsing, null for the built-in catalogs
+/// The server the user is browsing
 var server: ?Server = null;
 
 /// Called while a download runs, with the bytes received so far and the total
