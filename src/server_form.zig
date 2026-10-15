@@ -26,7 +26,8 @@ const ServerFields = struct {
     // InkView keeps password fields encrypted in the settings file
     password: ServerField = .{ .label = "Password (optional)", .kind = pb.CFG_PASSWORD },
     // The index of the chosen answer, "0" or "1"
-    calibre_web: ServerField = .{ .label = "Calibre-Web", .value = "0", .kind = pb.CFG_INDEX },
+    calibre_web: ServerField = .{ .label = "Calibre-Web (send the login right away)", .value = "0", .kind = pb.CFG_INDEX },
+    timeout: ServerField = .{ .label = "Connection timeout in seconds (optional)" },
 
     const names = @typeInfo(ServerFields).@"struct".field_names;
 
@@ -36,7 +37,11 @@ const ServerFields = struct {
         fields.url.value = server.url;
         fields.user.value = server.user;
         fields.password.value = server.password;
-        fields.calibre_web.value = if (server.calibre_web) "1" else "0";
+        fields.calibre_web.value = if (server.options.calibre_web) "1" else "0";
+        fields.timeout.value = if (server.options.timeout > 0)
+            std.fmt.bufPrintSentinel(&timeout_text, "{d}", .{server.options.timeout}, 0) catch ""
+        else
+            "";
         return fields;
     }
 
@@ -89,6 +94,9 @@ const ServerFields = struct {
     }
 };
 
+/// The timeout of the server being edited, as text for the form
+var timeout_text: [8]u8 = undefined;
+
 /// What ReadSecret returns when there is nothing to decrypt. Everything else it
 /// returns was allocated and must be freed.
 const no_secret: [:0]const u8 = "";
@@ -139,6 +147,10 @@ fn closeForm(open_config: *pb.iconfig) !?Server {
     const address = std.mem.trim(u8, fields.url.value, " ");
     if (name.len == 0 or address.len == 0) return null;
 
-    const calibre_web = std.mem.eql(u8, std.mem.trim(u8, fields.calibre_web.value, " "), "1");
-    return try Server.init(allocator, name, address, fields.user.value, fields.password.value, calibre_web);
+    const options: Server.Options = .{
+        .calibre_web = std.mem.eql(u8, std.mem.trim(u8, fields.calibre_web.value, " "), "1"),
+        // Anything but a number keeps the default
+        .timeout = std.fmt.parseInt(u16, std.mem.trim(u8, fields.timeout.value, " "), 10) catch 0,
+    };
+    return try Server.init(allocator, name, address, fields.user.value, fields.password.value, options);
 }

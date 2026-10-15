@@ -20,14 +20,21 @@ pub const Server = struct {
     url: [:0]const u8,
     user: [:0]const u8 = "",
     password: [:0]const u8 = "",
-    /// Calibre-Web only answers when the address of its catalog ends with a slash
-    calibre_web: bool = false,
+    options: Options = .{},
+
+    pub const Options = struct {
+        /// Send the login right away. Without it curl first asks without one to learn the
+        /// method, which Calibre-Web counts as a failed login (three a minute are allowed).
+        calibre_web: bool = false,
+        /// Seconds to wait for the connection to the server, 0 for the default
+        timeout: u16 = 0,
+    };
 
     /// Creates a server from what the user entered. This is the only place the address of a
     /// server is set: what was typed becomes the address of its catalog, with "http://" added
-    /// when no scheme is given and the usual "/opds" path when there is none. For Calibre-Web
-    /// the address is made to end with a slash.
-    pub fn init(allocator: std.mem.Allocator, name: []const u8, address: []const u8, user: []const u8, password: []const u8, calibre_web: bool) !Server {
+    /// when no scheme is given and the usual "/opds" path when there is none. An address with
+    /// a path is kept as it was typed.
+    pub fn init(allocator: std.mem.Allocator, name: []const u8, address: []const u8, user: []const u8, password: []const u8, options: Options) !Server {
         const s_name = try allocator.dupeSentinel(u8, std.mem.trim(u8, name, " "), 0);
         errdefer allocator.free(s_name);
 
@@ -41,10 +48,9 @@ pub const Server = struct {
         HostName.validate(host.percent_encoded) catch return error.InvalidAddress;
 
         const has_path = uri.path.percent_encoded.len > 1;
-        const needs_slash = calibre_web and uri.query == null and !std.mem.endsWith(u8, full, "/");
         const s_url = try std.fmt.allocPrintSentinel(allocator, "{s}{s}", .{
             if (has_path) full else std.mem.trimEnd(u8, full, "/"),
-            if (has_path) (if (needs_slash) "/" else "") else if (calibre_web) "/opds/" else "/opds",
+            if (has_path) "" else "/opds",
         }, 0);
         errdefer allocator.free(s_url);
 
@@ -53,7 +59,7 @@ pub const Server = struct {
         // A password without a user name is of no use
         const s_password = try allocator.dupeSentinel(u8, if (s_user.len == 0) "" else password, 0);
 
-        return .{ .name = s_name, .url = s_url, .user = s_user, .password = s_password, .calibre_web = calibre_web };
+        return .{ .name = s_name, .url = s_url, .user = s_user, .password = s_password, .options = options };
     }
 
     pub fn free(server: Server, allocator: std.mem.Allocator) void {
@@ -86,13 +92,7 @@ pub const Server = struct {
 };
 
 fn expectUrl(expected: []const u8, address: []const u8) !void {
-    const server: Server = try .init(std.testing.allocator, "Test", address, "", "", false);
-    defer server.free(std.testing.allocator);
-    try std.testing.expectEqualStrings(expected, server.url);
-}
-
-fn expectCalibreWebUrl(expected: []const u8, address: []const u8) !void {
-    const server: Server = try .init(std.testing.allocator, "Test", address, "", "", true);
+    const server: Server = try .init(std.testing.allocator, "Test", address, "", "", .{});
     defer server.free(std.testing.allocator);
     try std.testing.expectEqualStrings(expected, server.url);
 }
@@ -108,13 +108,16 @@ test "init keeps a scheme the user typed" {
     try expectUrl("https://books.example.org/opds", "https://books.example.org/");
 }
 
-test "init ends the address with a slash for Calibre-Web" {
-    try expectCalibreWebUrl("http://calibre-web.lan:8083/opds/", "calibre-web.lan:8083");
-    try expectCalibreWebUrl("http://calibre-web.lan:8083/opds/", "calibre-web.lan:8083/");
-    try expectCalibreWebUrl("http://calibre-web.lan:8083/opds/", "calibre-web.lan:8083/opds");
-    try expectCalibreWebUrl("https://example.org/books/opds/", "https://example.org/books/opds/");
-    // A query belongs to the address as it is
-    try expectCalibreWebUrl("https://example.org/opds?lang=fr", "https://example.org/opds?lang=fr");
+test "init keeps a trailing slash after a path" {
+    try expectUrl("http://calibre-web.lan:8083/opds/", "calibre-web.lan:8083/opds/");
+    try expectUrl("https://example.org/calibre-web/opds/shelf/20", "https://example.org/calibre-web/opds/shelf/20");
+}
+
+test "init keeps the options" {
+    const server: Server = try .init(std.testing.allocator, "Test", "calibre.lan", "", "", .{ .calibre_web = true, .timeout = 30 });
+    defer server.free(std.testing.allocator);
+    try std.testing.expect(server.options.calibre_web);
+    try std.testing.expectEqual(30, server.options.timeout);
 }
 
 test "init keeps a path the user typed" {
@@ -125,7 +128,7 @@ test "init keeps a path the user typed" {
 
 test "init leaves an address it produced itself unchanged" {
     try expectUrl("http://192.168.1.20:8080/opds", "http://192.168.1.20:8080/opds");
-    try expectCalibreWebUrl("http://192.168.1.20:8083/opds/", "http://192.168.1.20:8083/opds/");
+    try expectUrl("http://192.168.1.20:8083/opds/", "http://192.168.1.20:8083/opds/");
 }
 
 test "init leaves the default catalogs unchanged" {
@@ -134,7 +137,7 @@ test "init leaves the default catalogs unchanged" {
 
 test "init trims name and user name and copies everything" {
     var name = "  My Calibre ".*;
-    const server: Server = try .init(std.testing.allocator, &name, "calibre.lan", " alice ", "secret", false);
+    const server: Server = try .init(std.testing.allocator, &name, "calibre.lan", " alice ", "secret", .{});
     defer server.free(std.testing.allocator);
     // The server must not point into what it was created from
     @memset(&name, 'x');
@@ -146,7 +149,7 @@ test "init trims name and user name and copies everything" {
 }
 
 test "init drops a password that comes without a user name" {
-    const server: Server = try .init(std.testing.allocator, "Test", "calibre.lan", "  ", "secret", false);
+    const server: Server = try .init(std.testing.allocator, "Test", "calibre.lan", "  ", "secret", .{});
     defer server.free(std.testing.allocator);
 
     try std.testing.expectEqualStrings("", server.password);
@@ -171,10 +174,10 @@ test "owns tells other servers apart" {
 }
 
 test "init refuses what is not an address" {
-    try std.testing.expectError(error.InvalidAddress, Server.init(std.testing.allocator, "Test", "calibre.lan:port", "", "", false));
-    try std.testing.expectError(error.InvalidAddress, Server.init(std.testing.allocator, "Test", "http://", "", "", false));
-    try std.testing.expectError(error.InvalidAddress, Server.init(std.testing.allocator, "Test", "this is wrong", "", "", false));
-    try std.testing.expectError(error.InvalidAddress, Server.init(std.testing.allocator, "Test", "calibre_lan", "", "", false));
+    try std.testing.expectError(error.InvalidAddress, Server.init(std.testing.allocator, "Test", "calibre.lan:port", "", "", .{}));
+    try std.testing.expectError(error.InvalidAddress, Server.init(std.testing.allocator, "Test", "http://", "", "", .{}));
+    try std.testing.expectError(error.InvalidAddress, Server.init(std.testing.allocator, "Test", "this is wrong", "", "", .{}));
+    try std.testing.expectError(error.InvalidAddress, Server.init(std.testing.allocator, "Test", "calibre_lan", "", "", .{}));
 }
 
 test "userpwd joins user name and password for curl" {

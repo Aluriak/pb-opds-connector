@@ -3,7 +3,7 @@ const pb = @import("c");
 
 const Server = @import("server.zig").Server;
 const Catalogs = @import("server.zig").Catalogs;
-const Field = enum { name, url, user, password, calibre_web };
+const Field = enum { name, url, user, password, calibre_web, timeout };
 
 /// PocketBooks location for storing configuration of applications.
 pub const config_path = "/mnt/ext1/system/config/opds-connector.cfg";
@@ -45,7 +45,10 @@ fn read(allocator: std.mem.Allocator, servers: *std.ArrayList(Server)) !bool {
             std.mem.span(pb.ReadString(config, key(&buf, i, .url), "")),
             std.mem.span(pb.ReadString(config, key(&buf, i, .user), "")),
             std.mem.span(pb.ReadString(config, key(&buf, i, .password), "")),
-            pb.ReadInt(config, key(&buf, i, .calibre_web), 0) != 0,
+            .{
+                .calibre_web = pb.ReadInt(config, key(&buf, i, .calibre_web), 0) != 0,
+                .timeout = std.math.cast(u16, pb.ReadInt(config, key(&buf, i, .timeout), 0)) orelse 0,
+            },
         ) catch |err| switch (err) {
             // An invalid entry must not break the whole loading process.
             // Just skip it.
@@ -60,7 +63,7 @@ fn read(allocator: std.mem.Allocator, servers: *std.ArrayList(Server)) !bool {
 
 fn addDefaults(allocator: std.mem.Allocator, servers: *std.ArrayList(Server)) !void {
     for (Catalogs.defaults) |default| {
-        const server = try Server.init(allocator, default.name, default.url, "", "", false);
+        const server = try Server.init(allocator, default.name, default.url, "", "", .{});
         errdefer server.free(allocator);
         try servers.append(allocator, server);
     }
@@ -77,17 +80,23 @@ pub fn store(servers: []const Server) void {
         pb.WriteString(config, key(&buf, i, .url), server.url.ptr);
         pb.WriteString(config, key(&buf, i, .user), server.user.ptr);
         pb.WriteString(config, key(&buf, i, .password), server.password.ptr);
-        if (server.calibre_web) {
+        // Options are only written when set, to keep the file short
+        if (server.options.calibre_web) {
             pb.WriteInt(config, key(&buf, i, .calibre_web), 1);
         } else {
             pb.DeleteInt(config, key(&buf, i, .calibre_web));
+        }
+        if (server.options.timeout > 0) {
+            pb.WriteInt(config, key(&buf, i, .timeout), server.options.timeout);
+        } else {
+            pb.DeleteInt(config, key(&buf, i, .timeout));
         }
     }
 
     // A deleted server leaves the entry after the last one behind.
     // We do not want that.
     var buf: [32]u8 = undefined;
-    inline for (.{ Field.name, Field.url, Field.user, Field.password, Field.calibre_web }) |field| {
+    inline for (.{ Field.name, Field.url, Field.user, Field.password, Field.calibre_web, Field.timeout }) |field| {
         pb.DeleteString(config, key(&buf, servers.len, field));
     }
     pb.WriteInt(config, defaults_key, 1);

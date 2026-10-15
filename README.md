@@ -39,14 +39,14 @@ Besides the default catalogs you can add your own OPDS servers, for example Cali
 | URL | yes | For example `192.168.1.20:8080`. |
 | User name | no | Leave empty if the server needs no login. |
 | Password | no | Only used together with a user name. |
-| Calibre-Web | no | Choose "Yes" for a Calibre-Web server. Its catalog address must end with a slash, and the login is sent right away instead of after a first try without it, which Calibre-Web counts as a failed login. |
+| Calibre-Web | no | Choose "Yes" for Calibre-Web. The login is then sent right away, instead of after a first try without it, which Calibre-Web counts as a failed login (it allows three a minute). |
+| Connection timeout | no | Seconds to wait for the server to answer the connection, 5 when empty. Raise it for a slow or distant server. |
 
 **What happens to the URL**
 
 * Without `http://` or `https://` in front, `http://` is added.
 * Without a path, `/opds` is added, which is where Calibre serves its catalog. `192.168.1.20:8080` becomes `http://192.168.1.20:8080/opds`. If your catalog is somewhere else, type the full URL including the path.
 * A URL with a path is kept as you typed it.
-* With "Calibre-Web" set to "Yes", the address always ends with a slash: `192.168.1.20:8083` becomes `http://192.168.1.20:8083/opds/`, and so does `192.168.1.20:8083/opds`.
 
 **When nothing is saved**
 
@@ -68,6 +68,7 @@ server.0.url=http://192.168.1.20:8083/opds/
 server.0.user=alice
 server.0.password=secret
 server.0.calibre_web=1
+server.0.timeout=30
 server.1.name=Project Gutenberg
 server.1.url=https://www.gutenberg.org/ebooks.opds/
 
@@ -75,7 +76,7 @@ server.1.url=https://www.gutenberg.org/ebooks.opds/
 ```
 
 * The numbers start at 0 and must follow each other. The list ends at the first missing number.
-* `user`, `password` and `calibre_web` can be left out. The URL rules above apply here as well.
+* `user`, `password`, `calibre_web` and `timeout` can be left out. The URL rules above apply here as well.
 * Without `defaults_added=1` the default catalogs are put in front of your servers on the next start, and the line is added.
 * The app rewrites the file whenever you add, edit or delete a server on the reader, from the list it loaded at start. Close the app completely (also in the task switcher) before editing the file, or your changes are overwritten.
 * **The last line, like `#f78a2ef5`, is a checksum** the reader adds when it saves the file. If it does not match the content, the reader silently uses the previous version, `opds-connector.cfg.back`, and your changes are lost. After editing the file, fix the checksum with `python3 scripts/fix-config-checksum.py opds-connector.cfg`.

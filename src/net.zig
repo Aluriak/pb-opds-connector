@@ -29,6 +29,9 @@ const Target = union(enum) {
     file: *std.c.FILE,
 };
 
+/// Seconds to wait for a connection, unless the server sets its own
+const default_connect_timeout = 5;
+
 /// Why the last request failed, see `lastFailure`
 var failure: Failure = .{};
 var failure_text: [curl.CURL_ERROR_SIZE]u8 = undefined;
@@ -63,7 +66,8 @@ fn perform(url: [:0]const u8, target: Target) !void {
     _ = curl.curl_easy_setopt(handle, curl.CURLOPT_URL, url.ptr);
     _ = curl.curl_easy_setopt(handle, curl.CURLOPT_USERAGENT, user_agent);
     _ = curl.curl_easy_setopt(handle, curl.CURLOPT_TIMEOUT, @as(c_long, 120));
-    _ = curl.curl_easy_setopt(handle, curl.CURLOPT_CONNECTTIMEOUT, @as(c_long, 5));
+    const connect_timeout: c_long = if (server) |s| (if (s.options.timeout > 0) s.options.timeout else default_connect_timeout) else default_connect_timeout;
+    _ = curl.curl_easy_setopt(handle, curl.CURLOPT_CONNECTTIMEOUT, connect_timeout);
     _ = curl.curl_easy_setopt(handle, curl.CURLOPT_FOLLOWLOCATION, @as(c_long, 1));
     // Treat HTTP 4xx/5xx as an error instead of handing the error page to the caller
     _ = curl.curl_easy_setopt(handle, curl.CURLOPT_FAILONERROR, @as(c_long, 1));
@@ -72,10 +76,8 @@ fn perform(url: [:0]const u8, target: Target) !void {
         if (s.hasLogin() and s.owns(url)) {
             var buf: [160]u8 = undefined;
             if (s.userpwd(&buf)) |userpwd| {
-                // With ANY curl first asks without a login to learn which method the server
-                // wants. Calibre-Web counts that as a failed login and blocks after three a
-                // minute, and it only knows Basic anyway.
-                const auth = if (s.calibre_web) curl.CURLAUTH_BASIC else curl.CURLAUTH_ANY;
+                // See Server.Options.calibre_web
+                const auth = if (s.options.calibre_web) curl.CURLAUTH_BASIC else curl.CURLAUTH_ANY;
                 _ = curl.curl_easy_setopt(handle, curl.CURLOPT_HTTPAUTH, auth);
                 _ = curl.curl_easy_setopt(handle, curl.CURLOPT_USERPWD, userpwd.ptr);
             } else |_| {}
