@@ -41,6 +41,11 @@ pub fn lastFailure(buf: []u8) []const u8 {
     return failure.describe(buf);
 }
 
+/// The server the user is browsing, null on the start screen
+pub fn currentServer() ?Server {
+    return server;
+}
+
 pub fn useServer(new_server: ?Server) void {
     server = new_server;
 }

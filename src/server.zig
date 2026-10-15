@@ -28,6 +28,9 @@ pub const Server = struct {
         calibre_web: bool = false,
         /// Seconds to wait for the connection to the server, 0 for the default
         timeout: u16 = 0,
+        /// Lists of the catalog get a "Synchronize" row, which downloads all their books
+        /// that are not on the reader yet
+        sync: bool = false,
     };
 
     /// Creates a server from what the user entered. This is the only place the address of a

@@ -160,9 +160,12 @@ fn listHandler(action: c_int, x: c_int, y: c_int, idx: c_int, state: c_int) call
                 net.useServer(catalogs.servers.items[@intCast(idx)]);
             }
 
-            if (feed.search != null and idx == 0) {
+            if (entry.action == .search) {
                 search_text[0] = 0;
                 pb.OpenKeyboard("Search", &search_text, search_text.len - 1, pb.KBD_NORMAL, searchEntered);
+            } else if (entry.action == .sync) {
+                synchronize(feed);
+                showList();
             } else if (entry.downloads.len > 0) {
                 download.start(entry);
             } else if (entry.nav_url) |url| {
@@ -203,7 +206,34 @@ fn listHandler(action: c_int, x: c_int, y: c_int, idx: c_int, state: c_int) call
 
 fn showList() void {
     const feed = &feeds.items[feeds.items.len - 1];
-    pb.OpenList(app_title, null, pb.ScreenWidth(), item_height, @intCast(feed.entries.len), feed.pos, listHandler);
+    pb.OpenList(listTitle(), null, pb.ScreenWidth(), item_height, @intCast(feed.entries.len), feed.pos, listHandler);
+}
+
+/// Inside a catalog the header names it, the start screen shows the name of the app
+fn listTitle() [*:0]const u8 {
+    if (feeds.items.len > 1) {
+        if (net.currentServer()) |server| return server.name.ptr;
+    }
+    return app_title;
+}
+
+/// Loads the rest of the list, then downloads its books that are not on the reader yet
+fn synchronize(feed: *Feed) void {
+    if (feed.next_url != null) {
+        if (!pocketbook.ensureNetwork()) {
+            pocketbook.showError("Could not synchronize", error.NoNetwork);
+            return;
+        }
+        pb.ShowHourglassForce();
+        defer pb.HideHourglass();
+        while (feed.next_url != null) {
+            feed.loadMore() catch |err| {
+                pocketbook.showError("Could not load the whole list", err);
+                return;
+            };
+        }
+    }
+    download.synchronize(feed.entries);
 }
 
 /// Puts the start screen together again after servers were loaded, added or deleted
@@ -316,12 +346,24 @@ fn loadFeed(url: [:0]const u8) !void {
     trace("parsed {d} entries, next={?s}\n", .{ parsed.entries.len, parsed.next_url });
     if (parsed.entries.len == 0) return error.EmptyFeed;
 
-    // A catalog that can be searched gets the "Search" row in front
-    const search_row: xml.Entry = .{ .title = "Search", .summary = "Search this catalog" };
-    const entries = if (parsed.search == null)
-        parsed.entries
+    // A catalog that can be searched gets the "Search" row in front, a list of books of a
+    // catalog that may be synchronized the "Synchronize" row
+    const search_row: xml.Entry = .{ .action = .search, .title = "Search", .summary = "Search this catalog" };
+    const sync_row: xml.Entry = .{ .action = .sync, .title = "Synchronize", .summary = "Download all books of this list that are not on the reader yet" };
+    const has_books = for (parsed.entries) |entry| {
+        if (entry.downloads.len > 0) break true;
+    } else false;
+    const may_sync = if (net.currentServer()) |server| server.options.sync else false;
+
+    const rows: []const xml.Entry = if (parsed.search != null and has_books and may_sync)
+        &.{ search_row, sync_row }
+    else if (parsed.search != null)
+        &.{search_row}
+    else if (has_books and may_sync)
+        &.{sync_row}
     else
-        try std.mem.concat(arena.allocator(), xml.Entry, &.{ &.{search_row}, parsed.entries });
+        &.{};
+    const entries = try std.mem.concat(arena.allocator(), xml.Entry, &.{ rows, parsed.entries });
 
     try feeds.append(gpa, .{ .arena = arena, .entries = entries, .next_url = parsed.next_url, .search = parsed.search });
 }
@@ -387,7 +429,7 @@ fn loadMoreTimer() callconv(.c) void {
         pocketbook.showError("Could not load more entries", err);
         return;
     };
-    pb.OpenList(app_title, null, pb.ScreenWidth(), item_height, @intCast(feed.entries.len), feed.top, listHandler);
+    pb.OpenList(listTitle(), null, pb.ScreenWidth(), item_height, @intCast(feed.entries.len), feed.top, listHandler);
 }
 
 pub fn main() void {

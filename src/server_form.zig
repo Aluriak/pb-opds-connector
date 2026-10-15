@@ -28,6 +28,7 @@ const ServerFields = struct {
     // The index of the chosen answer, "0" or "1"
     calibre_web: ServerField = .{ .label = "Calibre-Web (send the login right away)", .value = "0", .kind = pb.CFG_INDEX },
     timeout: ServerField = .{ .label = "Connection timeout in seconds (optional)" },
+    sync: ServerField = .{ .label = "Allow full sync", .value = "0", .kind = pb.CFG_INDEX },
 
     const names = @typeInfo(ServerFields).@"struct".field_names;
 
@@ -38,6 +39,7 @@ const ServerFields = struct {
         fields.user.value = server.user;
         fields.password.value = server.password;
         fields.calibre_web.value = if (server.options.calibre_web) "1" else "0";
+        fields.sync.value = if (server.options.sync) "1" else "0";
         fields.timeout.value = if (server.options.timeout > 0)
             std.fmt.bufPrintSentinel(&timeout_text, "{d}", .{server.options.timeout}, 0) catch ""
         else
@@ -94,6 +96,11 @@ const ServerFields = struct {
     }
 };
 
+/// Whether a yes/no row was answered with "Yes", its index being 1
+fn isYes(value: []const u8) bool {
+    return std.mem.eql(u8, std.mem.trim(u8, value, " "), "1");
+}
+
 /// The timeout of the server being edited, as text for the form
 var timeout_text: [8]u8 = undefined;
 
@@ -148,7 +155,8 @@ fn closeForm(open_config: *pb.iconfig) !?Server {
     if (name.len == 0 or address.len == 0) return null;
 
     const options: Server.Options = .{
-        .calibre_web = std.mem.eql(u8, std.mem.trim(u8, fields.calibre_web.value, " "), "1"),
+        .calibre_web = isYes(fields.calibre_web.value),
+        .sync = isYes(fields.sync.value),
         // Anything but a number keeps the default
         .timeout = std.fmt.parseInt(u16, std.mem.trim(u8, fields.timeout.value, " "), 10) catch 0,
     };

@@ -12,6 +12,7 @@ An OPDS connector for PocketBook e-readers. Browse catalogs and download books s
     * ManyBooks
     * Gutenberg
     * Standard Ebooks
+* [**Synchronization:**](#synchronization) Download all books of a list (a Calibre-Web shelf, for example) that are not on the reader yet, in one go.
 * [**Search:**](#search) Catalogs that offer a search show a "Search" row at the top of each list.
 * **Format selection:** Choose from the formats a catalog offers. A progress bar shows the download.
 * **Download handling:** Books are saved to the Downloads folder and show up in the library right away, without a restart.
@@ -40,6 +41,7 @@ Besides the default catalogs you can add your own OPDS servers, for example Cali
 | User name | no | Leave empty if the server needs no login. |
 | Password | no | Only used together with a user name. |
 | Calibre-Web | no | Choose "Yes" for Calibre-Web. The login is then sent right away, instead of after a first try without it, which Calibre-Web counts as a failed login (it allows three a minute). |
+| Allow full sync | no | Lists of books of this catalog get a "Synchronize" row, see [Synchronization](#synchronization). |
 | Connection timeout | no | Seconds to wait for the server to answer the connection, 5 when empty. Raise it for a slow or distant server. |
 
 **What happens to the URL**
@@ -69,6 +71,7 @@ server.0.user=alice
 server.0.password=secret
 server.0.calibre_web=1
 server.0.timeout=30
+server.0.sync=1
 server.1.name=Project Gutenberg
 server.1.url=https://www.gutenberg.org/ebooks.opds/
 
@@ -76,7 +79,7 @@ server.1.url=https://www.gutenberg.org/ebooks.opds/
 ```
 
 * The numbers start at 0 and must follow each other. The list ends at the first missing number.
-* `user`, `password`, `calibre_web` and `timeout` can be left out. The URL rules above apply here as well.
+* `user`, `password`, `calibre_web`, `timeout` and `sync` can be left out. The URL rules above apply here as well.
 * Without `defaults_added=1` the default catalogs are put in front of your servers on the next start, and the line is added.
 * The app rewrites the file whenever you add, edit or delete a server on the reader, from the list it loaded at start. Close the app completely (also in the task switcher) before editing the file, or your changes are overwritten.
 * **The last line, like `#f78a2ef5`, is a checksum** the reader adds when it saves the file. If it does not match the content, the reader silently uses the previous version, `opds-connector.cfg.back`, and your changes are lost. After editing the file, fix the checksum with `python3 scripts/fix-config-checksum.py opds-connector.cfg`.
@@ -85,6 +88,15 @@ server.1.url=https://www.gutenberg.org/ebooks.opds/
 
 * The user name and password are stored unencrypted on the reader, in [the configuration file](#configuration-file). Anyone with access to the reader's storage can read them.
 * They are only sent to the server you entered, never to another server a catalog links to.
+
+## Synchronization
+
+For a server with "Allow full sync" set to "Yes", every list of books starts with a "Synchronize" row (after "Search", if there is one). Opening it loads the whole list, then downloads each book that is not on the reader yet, in EPUB if the catalog offers it. A summary tells how many were downloaded, already there or failed.
+
+* Books are recognized by the id the catalog gives them, not by title or author, so a book renamed in the catalog is not downloaded again. Calibre and Calibre-Web give every book such an id.
+* They are saved in the Downloads folder under names like `opds-3f2a9c41b07de815.epub`. The library shows them with their title and author as usual. Books you download by hand from such a server get the same kind of name, so a sync does not fetch them a second time.
+* Nothing is ever deleted or replaced. A book removed from the list stays on the reader, and a book whose file changed in the catalog is not downloaded again.
+* The sync runs while the app is open. If it is cut short, open "Synchronize" again: what is already on the reader is skipped.
 
 ## Search
 
