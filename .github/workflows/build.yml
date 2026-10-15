@@ -41,6 +41,15 @@ jobs:
       - name: Build
         run: make build-all
 
+      - name: Build for debugging
+        run: |
+          # Debug builds write a log, see "Debugging" in the README
+          for platform in allwinner rk3566; do
+            zig build -Dplatform=$platform --prefix zig-out/debug-$platform
+            mv "zig-out/debug-$platform/bin/OPDS Connector.app" "zig-out/debug-$platform/bin/OPDS Connector.bin"
+            cp scripts/opds-debug.app zig-out/debug-$platform/bin/
+          done
+
       - name: Upload allwinner
         uses: actions/upload-artifact@v4
         with:
@@ -53,4 +62,18 @@ jobs:
         with:
           name: opds-connector-${{ github.sha }}-rk3566
           path: zig-out/rk3566/bin/OPDS Connector.app
+          if-no-files-found: error
+
+      - name: Upload allwinner debug build
+        uses: actions/upload-artifact@v4
+        with:
+          name: opds-connector-${{ github.sha }}-allwinner-debug
+          path: zig-out/debug-allwinner/bin/
+          if-no-files-found: error
+
+      - name: Upload rk3566 debug build
+        uses: actions/upload-artifact@v4
+        with:
+          name: opds-connector-${{ github.sha }}-rk3566-debug
+          path: zig-out/debug-rk3566/bin/
           if-no-files-found: error

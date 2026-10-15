@@ -2,6 +2,7 @@ const builtin = @import("builtin");
 const std = @import("std");
 const curl = @import("libcurl.zig");
 const Server = @import("server.zig").Server;
+const Failure = @import("failure.zig").Failure;
 
 const user_agent = "pb-opds-connector/" ++ @import("build_options").version;
 
@@ -27,6 +28,15 @@ const Target = union(enum) {
     memory: *Buffer,
     file: *std.c.FILE,
 };
+
+/// Why the last request failed, see `lastFailure`
+var failure: Failure = .{};
+var failure_text: [curl.CURL_ERROR_SIZE]u8 = undefined;
+
+/// Describes why the last request ended in error.RequestFailed
+pub fn lastFailure(buf: []u8) []const u8 {
+    return failure.describe(buf);
+}
 
 pub fn useServer(new_server: ?Server) void {
     server = new_server;
@@ -62,7 +72,11 @@ fn perform(url: [:0]const u8, target: Target) !void {
         if (s.hasLogin() and s.owns(url)) {
             var buf: [160]u8 = undefined;
             if (s.userpwd(&buf)) |userpwd| {
-                _ = curl.curl_easy_setopt(handle, curl.CURLOPT_HTTPAUTH, curl.CURLAUTH_ANY);
+                // With ANY curl first asks without a login to learn which method the server
+                // wants. Calibre-Web counts that as a failed login and blocks after three a
+                // minute, and it only knows Basic anyway.
+                const auth = if (s.calibre_web) curl.CURLAUTH_BASIC else curl.CURLAUTH_ANY;
+                _ = curl.curl_easy_setopt(handle, curl.CURLOPT_HTTPAUTH, auth);
                 _ = curl.curl_easy_setopt(handle, curl.CURLOPT_USERPWD, userpwd.ptr);
             } else |_| {}
         }
@@ -86,7 +100,17 @@ fn perform(url: [:0]const u8, target: Target) !void {
         _ = curl.curl_easy_setopt(handle, curl.CURLOPT_VERBOSE, @as(c_long, 1));
     }
 
-    if (curl.curl_easy_perform(handle) != curl.CURLE_OK) {
+    var error_buf = std.mem.zeroes([curl.CURL_ERROR_SIZE]u8);
+    _ = curl.curl_easy_setopt(handle, curl.CURLOPT_ERRORBUFFER, &error_buf);
+
+    const code = curl.curl_easy_perform(handle);
+    if (code != curl.CURLE_OK) {
+        var status: c_long = 0;
+        _ = curl.curl_easy_getinfo(handle, curl.CURLINFO_RESPONSE_CODE, &status);
+        // The buffer goes away with this function, keep its text
+        const text = std.mem.sliceTo(&error_buf, 0);
+        @memcpy(failure_text[0..text.len], text);
+        failure = .{ .http_status = status, .curl_text = failure_text[0..text.len], .curl_code = code };
         return error.RequestFailed;
     }
 }
