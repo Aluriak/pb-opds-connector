@@ -70,12 +70,15 @@ server.0.password=secret
 server.0.calibre_web=1
 server.1.name=Project Gutenberg
 server.1.url=https://www.gutenberg.org/ebooks.opds/
+
+#…
 ```
 
 * The numbers start at 0 and must follow each other. The list ends at the first missing number.
 * `user`, `password` and `calibre_web` can be left out. The URL rules above apply here as well.
 * Without `defaults_added=1` the default catalogs are put in front of your servers on the next start, and the line is added.
 * The app rewrites the file whenever you add, edit or delete a server on the reader, from the list it loaded at start. Close the app completely (also in the task switcher) before editing the file, or your changes are overwritten.
+* **The last line, like `#f78a2ef5`, is a checksum** the reader adds when it saves the file. If it does not match the content, the reader silently uses the previous version, `opds-connector.cfg.back`, and your changes are lost. After editing the file, fix the checksum with `python3 scripts/fix-config-checksum.py opds-connector.cfg`.
 
 **About the login**
 
