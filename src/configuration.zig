@@ -3,7 +3,7 @@ const pb = @import("c");
 
 const Server = @import("server.zig").Server;
 const Catalogs = @import("server.zig").Catalogs;
-const Field = enum { name, url, user, password };
+const Field = enum { name, url, user, password, calibre_web };
 
 /// PocketBooks location for storing configuration of applications.
 pub const config_path = "/mnt/ext1/system/config/opds-connector.cfg";
@@ -45,6 +45,7 @@ fn read(allocator: std.mem.Allocator, servers: *std.ArrayList(Server)) !bool {
             std.mem.span(pb.ReadString(config, key(&buf, i, .url), "")),
             std.mem.span(pb.ReadString(config, key(&buf, i, .user), "")),
             std.mem.span(pb.ReadString(config, key(&buf, i, .password), "")),
+            pb.ReadInt(config, key(&buf, i, .calibre_web), 0) != 0,
         ) catch |err| switch (err) {
             // An invalid entry must not break the whole loading process.
             // Just skip it.
@@ -59,7 +60,7 @@ fn read(allocator: std.mem.Allocator, servers: *std.ArrayList(Server)) !bool {
 
 fn addDefaults(allocator: std.mem.Allocator, servers: *std.ArrayList(Server)) !void {
     for (Catalogs.defaults) |default| {
-        const server = try Server.init(allocator, default.name, default.url, "", "");
+        const server = try Server.init(allocator, default.name, default.url, "", "", false);
         errdefer server.free(allocator);
         try servers.append(allocator, server);
     }
@@ -76,12 +77,17 @@ pub fn store(servers: []const Server) void {
         pb.WriteString(config, key(&buf, i, .url), server.url.ptr);
         pb.WriteString(config, key(&buf, i, .user), server.user.ptr);
         pb.WriteString(config, key(&buf, i, .password), server.password.ptr);
+        if (server.calibre_web) {
+            pb.WriteInt(config, key(&buf, i, .calibre_web), 1);
+        } else {
+            pb.DeleteInt(config, key(&buf, i, .calibre_web));
+        }
     }
 
     // A deleted server leaves the entry after the last one behind.
     // We do not want that.
     var buf: [32]u8 = undefined;
-    inline for (.{ Field.name, Field.url, Field.user, Field.password }) |field| {
+    inline for (.{ Field.name, Field.url, Field.user, Field.password, Field.calibre_web }) |field| {
         pb.DeleteString(config, key(&buf, servers.len, field));
     }
     pb.WriteInt(config, defaults_key, 1);

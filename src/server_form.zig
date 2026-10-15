@@ -17,12 +17,16 @@ var on_done: DoneFn = undefined;
 const ServerField = struct {
     label: [:0]const u8 = "",
     value: [:0]const u8 = "",
+    kind: c_int = pb.CFG_TEXT,
 };
 const ServerFields = struct {
     name: ServerField = .{ .label = "Name" },
     url: ServerField = .{ .label = "URL" },
     user: ServerField = .{ .label = "User name (optional)" },
-    password: ServerField = .{ .label = "Password (optional)" },
+    // InkView keeps password fields encrypted in the settings file
+    password: ServerField = .{ .label = "Password (optional)", .kind = pb.CFG_PASSWORD },
+    // The index of the chosen answer, "0" or "1"
+    calibre_web: ServerField = .{ .label = "Calibre-Web", .value = "0", .kind = pb.CFG_INDEX },
 
     const names = @typeInfo(ServerFields).@"struct".field_names;
 
@@ -32,6 +36,7 @@ const ServerFields = struct {
         fields.url.value = server.url;
         fields.user.value = server.user;
         fields.password.value = server.password;
+        fields.calibre_web.value = if (server.calibre_web) "1" else "0";
         return fields;
     }
 
@@ -39,11 +44,13 @@ const ServerFields = struct {
         const empty: ServerFields = .{};
         var rows: [names.len + 1]pb.iconfigedit = undefined;
         inline for (names, 0..) |field, i| {
+            const f = @field(empty, field);
             rows[i] = .{
-                .type = if (std.mem.eql(u8, field, "password")) pb.CFG_PASSWORD else pb.CFG_TEXT,
-                .text = @constCast(@field(empty, field).label.ptr),
+                .type = f.kind,
+                .text = @constCast(f.label.ptr),
                 .name = @constCast(field.ptr),
-                .deflt = @constCast(""),
+                .deflt = @constCast(f.value.ptr),
+                .variants = if (f.kind == pb.CFG_INDEX) @ptrCast(&no_yes) else null,
             };
         }
         // An empty row ends the form
@@ -54,14 +61,23 @@ const ServerFields = struct {
 
     fn write(fields: ServerFields, cfg: *pb.iconfig) void {
         inline for (names) |field| {
-            pb.WriteString(cfg, field, @field(fields, field).value.ptr);
+            const f = @field(fields, field);
+            if (f.kind == pb.CFG_PASSWORD) {
+                pb.WriteSecret(cfg, field, f.value.ptr);
+            } else {
+                pb.WriteString(cfg, field, f.value.ptr);
+            }
         }
     }
 
     fn read(cfg: *pb.iconfig) ServerFields {
         var fields: ServerFields = .{};
         inline for (names) |field| {
-            @field(fields, field).value = std.mem.span(pb.ReadString(cfg, field, ""));
+            const f = &@field(fields, field);
+            f.value = std.mem.span(if (f.kind == pb.CFG_PASSWORD)
+                pb.ReadSecret(cfg, field, no_secret)
+            else
+                pb.ReadString(cfg, field, f.value.ptr));
         }
         return fields;
     }
@@ -72,6 +88,13 @@ const ServerFields = struct {
         }
     }
 };
+
+/// What ReadSecret returns when there is nothing to decrypt. Everything else it
+/// returns was allocated and must be freed.
+const no_secret: [:0]const u8 = "";
+
+/// The answers of a yes/no row, InkView stores the index of the chosen one
+var no_yes = [_:null]?[*:0]const u8{ "No", "Yes" };
 
 var form_rows = ServerFields.getFormRows();
 
@@ -111,9 +134,11 @@ fn closeForm(open_config: *pb.iconfig) !?Server {
     }
 
     const fields = ServerFields.read(open_config);
+    defer if (fields.password.value.ptr != no_secret.ptr) std.c.free(@constCast(fields.password.value.ptr));
     const name = std.mem.trim(u8, fields.name.value, " ");
     const address = std.mem.trim(u8, fields.url.value, " ");
     if (name.len == 0 or address.len == 0) return null;
 
-    return try Server.init(allocator, name, address, fields.user.value, fields.password.value);
+    const calibre_web = std.mem.eql(u8, std.mem.trim(u8, fields.calibre_web.value, " "), "1");
+    return try Server.init(allocator, name, address, fields.user.value, fields.password.value, calibre_web);
 }
