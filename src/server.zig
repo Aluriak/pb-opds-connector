@@ -5,23 +5,14 @@ const HostName = std.Io.net.HostName;
 pub const Catalogs = struct {
     servers: std.ArrayList(Server) = .empty,
 
-    const internals = [_]Server{
-        .{ .name = "Flibusta", .url = "http://flibusta.is/opds", .internal = true },
-        .{ .name = "Standard Ebooks (new releases)", .url = "https://standardebooks.org/feeds/atom/new-releases", .internal = true },
-        .{ .name = "ManyBooks", .url = "https://manybooks.net/opds/index.php", .internal = true },
-        .{ .name = "Project Gutenberg", .url = "https://www.gutenberg.org/ebooks.opds/", .internal = true },
+    /// Written into the configuration on the first start. From then on they are
+    /// ordinary entries the user can edit or delete.
+    pub const defaults = [_]struct { name: []const u8, url: []const u8 }{
+        .{ .name = "Flibusta", .url = "http://flibusta.is/opds" },
+        .{ .name = "Standard Ebooks (new releases)", .url = "https://standardebooks.org/feeds/atom/new-releases" },
+        .{ .name = "ManyBooks", .url = "https://manybooks.net/opds/index.php" },
+        .{ .name = "Project Gutenberg", .url = "https://www.gutenberg.org/ebooks.opds/" },
     };
-
-    pub fn init(allocator: std.mem.Allocator) !Catalogs {
-        var catalogs: Catalogs = .{};
-        try catalogs.servers.appendSlice(allocator, &internals);
-        return catalogs;
-    }
-
-    /// The servers the user added. Only these are stored
-    pub fn custom(catalogs: Catalogs) []Server {
-        return catalogs.servers.items[internals.len..];
-    }
 };
 
 pub const Server = struct {
@@ -29,11 +20,11 @@ pub const Server = struct {
     url: [:0]const u8,
     user: [:0]const u8 = "",
     password: [:0]const u8 = "",
-    internal: bool = false,
 
     /// Creates a server from what the user entered. This is the only place the address of a
     /// server is set: what was typed becomes the address of its catalog, with "http://" added
-    /// when no scheme is given and the usual "/opds" path when there is none.
+    /// when no scheme is given and the usual "/opds" path when there is none. A trailing
+    /// slash is kept, some servers (Calibre-Web) need it.
     pub fn init(allocator: std.mem.Allocator, name: []const u8, address: []const u8, user: []const u8, password: []const u8) !Server {
         const s_name = try allocator.dupeSentinel(u8, std.mem.trim(u8, name, " "), 0);
         errdefer allocator.free(s_name);
@@ -50,7 +41,7 @@ pub const Server = struct {
         const has_path = uri.path.percent_encoded.len > 1;
         const s_url = try std.fmt.allocPrintSentinel(allocator, "{s}{s}", .{
             if (has_path) full else std.mem.trimEnd(u8, full, "/"),
-            if (has_path) "" else "/opds",
+            if (has_path) "" else if (std.mem.endsWith(u8, full, "/")) "/opds/" else "/opds",
         }, 0);
         errdefer allocator.free(s_url);
 
@@ -100,12 +91,16 @@ fn expectUrl(expected: []const u8, address: []const u8) !void {
 test "init adds scheme and catalog path to a bare server" {
     try expectUrl("http://192.168.1.20:8080/opds", "192.168.1.20:8080");
     try expectUrl("http://calibre.lan/opds", "calibre.lan");
-    try expectUrl("http://calibre.lan/opds", "  calibre.lan/ ");
 }
 
 test "init keeps a scheme the user typed" {
     try expectUrl("https://books.example.org/opds", "https://books.example.org");
-    try expectUrl("https://books.example.org/opds", "https://books.example.org/");
+}
+
+test "init keeps a trailing slash" {
+    try expectUrl("http://calibre.lan/opds/", "  calibre.lan/ ");
+    try expectUrl("https://books.example.org/opds/", "https://books.example.org/");
+    try expectUrl("http://calibre-web.lan:8083/opds/", "calibre-web.lan:8083/opds/");
 }
 
 test "init keeps a path the user typed" {
@@ -116,6 +111,11 @@ test "init keeps a path the user typed" {
 
 test "init leaves an address it produced itself unchanged" {
     try expectUrl("http://192.168.1.20:8080/opds", "http://192.168.1.20:8080/opds");
+    try expectUrl("http://192.168.1.20:8080/opds/", "http://192.168.1.20:8080/opds/");
+}
+
+test "init leaves the default catalogs unchanged" {
+    for (Catalogs.defaults) |default| try expectUrl(default.url, default.url);
 }
 
 test "init trims name and user name and copies everything" {

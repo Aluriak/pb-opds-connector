@@ -7,7 +7,7 @@ An OPDS connector for PocketBook e-readers. Browse catalogs and download books s
 * **Native PocketBook integration:** Built on PocketBook's own SDK, so it looks and behaves like the reader's built-in apps.
 * **Browsing OPDS catalogs:**
   * [Calibre and custom endpoints](#configuration)
-  * Browse a default set of OPDS catalogs
+  * A default set of OPDS catalogs, which you can edit or delete like your own
     * Flibusta
     * ManyBooks
     * Gutenberg
@@ -28,7 +28,7 @@ An OPDS connector for PocketBook e-readers. Browse catalogs and download books s
 
 ### Custom server
 
-Besides the built-in catalogs you can add your own OPDS servers, for example Calibre or Calibre-Web.
+Besides the default catalogs you can add your own OPDS servers, for example Calibre or Calibre-Web.
 
 1. Open "+ Add server" at the end of the start screen.
 2. Fill in the form and leave it with the back button. The server then appears in the list.
@@ -45,6 +45,7 @@ Besides the built-in catalogs you can add your own OPDS servers, for example Cal
 * Without `http://` or `https://` in front, `http://` is added.
 * Without a path, `/opds` is added, which is where Calibre serves its catalog. `192.168.1.20:8080` becomes `http://192.168.1.20:8080/opds`. If your catalog is somewhere else, type the full URL including the path.
 * A URL with a path is kept as you typed it.
+* A trailing slash is kept: `192.168.1.20:8083/` becomes `http://192.168.1.20:8083/opds/`. Some servers, like Calibre-Web, need it.
 
 **When nothing is saved**
 
@@ -53,11 +54,30 @@ Besides the built-in catalogs you can add your own OPDS servers, for example Cal
 
 **Edit or delete a server**
 
-Press and hold a server you added, then choose "Edit" or "Delete". The built-in catalogs cannot be changed.
+Press and hold a server, then choose "Edit" or "Delete". This works for the default catalogs too. Once deleted, they do not come back.
+
+### Configuration file
+
+All servers, the default catalogs included, are stored in `system/config/opds-connector.cfg` on the reader. You can prepare or edit it on a computer while the reader is connected over USB, instead of typing the servers on the reader:
+
+```
+defaults_added=1
+server.0.name=Calibre-Web
+server.0.url=http://192.168.1.20:8083/opds/
+server.0.user=alice
+server.0.password=secret
+server.1.name=Project Gutenberg
+server.1.url=https://www.gutenberg.org/ebooks.opds/
+```
+
+* The numbers start at 0 and must follow each other. The list ends at the first missing number.
+* `user` and `password` can be left out. The URL rules above apply here as well.
+* Without `defaults_added=1` the default catalogs are put in front of your servers on the next start, and the line is added.
+* The app rewrites the file whenever you add, edit or delete a server on the reader, from the list it loaded at start. Close the app completely (also in the task switcher) before editing the file, or your changes are overwritten.
 
 **About the login**
 
-* The user name and password are stored unencrypted on the reader, in `system/config/opds-connector.cfg`. Anyone with access to the reader's storage can read them.
+* The user name and password are stored unencrypted on the reader, in [the configuration file](#configuration-file). Anyone with access to the reader's storage can read them.
 * They are only sent to the server you entered, never to another server a catalog links to.
 
 ## Search
