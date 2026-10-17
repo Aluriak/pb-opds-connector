@@ -2,6 +2,8 @@
 PLATFORMS := allwinner rk3566
 # Mountpoint of the reader device
 DEVICE ?= /Volumes/PB710
+# Extra options for the production builds, e.g. ZIGFLAGS="-Dchannel=nightly -Dcommit=..."
+ZIGFLAGS ?=
 # Applicaton name, see build.zig
 APP := OPDS Connector.app
 
@@ -15,8 +17,8 @@ help:
 .PHONY: build-all
 build-all:
 	@for platform in $(PLATFORMS); do \
-		echo "zig build -Doptimize=ReleaseSmall -Dplatform=$$platform --prefix zig-out/$$platform"; \
-		zig build -Doptimize=ReleaseSmall -Dplatform=$$platform --prefix zig-out/$$platform || exit 1; \
+		echo "zig build -Doptimize=ReleaseSmall -Dplatform=$$platform $(ZIGFLAGS) --prefix zig-out/$$platform"; \
+		zig build -Doptimize=ReleaseSmall -Dplatform=$$platform $(ZIGFLAGS) --prefix zig-out/$$platform || exit 1; \
 	done
 
 ## build-rk3566: build production executable for Rockchip RK3566 readers

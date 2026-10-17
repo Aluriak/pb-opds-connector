@@ -47,8 +47,34 @@ jobs:
       - name: Tests
         run: make test
 
+      - name: Decide the kind of build
+        run: |
+          # The app compares these with what is published when it looks for an update
+          if [ "$GITHUB_REF_TYPE" = tag ] && [ "${GITHUB_REF_NAME#v}" != "$GITHUB_REF_NAME" ]; then
+            channel=release; tag="$GITHUB_REF_NAME"
+          elif [ "$GITHUB_EVENT_NAME" = push ] && [ "$GITHUB_REF" = refs/heads/main ]; then
+            channel=nightly; tag=nightly
+          else
+            channel=dev; tag=
+          fi
+          version="$(sed -n 's/^ *\.version = "\(.*\)",.*/\1/p' build.zig.zon)"
+          {
+            echo "CHANNEL=$channel"
+            echo "RELEASE_TAG=$tag"
+            echo "APP_VERSION=$version"
+            echo "ZIGFLAGS=-Dchannel=$channel -Dcommit=$GITHUB_SHA -Dupdate-repo=$GITHUB_REPOSITORY"
+          } >> "$GITHUB_ENV"
+
+      - name: Check that a release tag matches the version
+        if: env.CHANNEL == 'release'
+        run: |
+          if [ "$RELEASE_TAG" != "v$APP_VERSION" ]; then
+            echo "Tag $RELEASE_TAG does not match version $APP_VERSION in build.zig.zon"
+            exit 1
+          fi
+
       - name: Build
-        run: make build-all
+        run: make build-all ZIGFLAGS="$ZIGFLAGS"
 
       - name: Build for debugging
         run: |
@@ -65,7 +91,17 @@ jobs:
           for platform in allwinner rk3566; do
             (cd zig-out/$platform/bin && zip -9 "$GITHUB_WORKSPACE/dist/opds-connector-$platform.zip" "OPDS Connector.app")
             (cd zig-out/debug-$platform/bin && zip -9 "$GITHUB_WORKSPACE/dist/opds-connector-$platform-debug.zip" "OPDS Connector.bin" opds-debug.app)
+            # Unzipped, for the app to update itself
+            cp "zig-out/$platform/bin/OPDS Connector.app" "dist/opds-connector-$platform.app"
           done
+          {
+            echo "channel=$CHANNEL"
+            echo "version=$APP_VERSION"
+            echo "commit=$GITHUB_SHA"
+            echo "tag=$RELEASE_TAG"
+            echo "date=$(date -u +%Y-%m-%d)"
+          } > dist/version.txt
+          cat dist/version.txt
           ls -la dist
 
       - name: Keep the files of this run
@@ -81,8 +117,18 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release delete nightly --cleanup-tag --yes || true
-          gh release create nightly dist/*.zip \
+          gh release create nightly dist/* \
             --prerelease \
             --target "$GITHUB_SHA" \
             --title "Nightly build" \
             --notes "Latest build of main, commit ${GITHUB_SHA::7}. Unzip and copy \`OPDS Connector.app\` into the \`applications\` folder of your PocketBook."
+
+      - name: Publish the release
+        if: env.CHANNEL == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$RELEASE_TAG" dist/* \
+            --verify-tag \
+            --title "$RELEASE_TAG" \
+            --notes "Version ${APP_VERSION}. Unzip and copy \`OPDS Connector.app\` into the \`applications\` folder of your PocketBook, or use \"Check for updates\" in the app."

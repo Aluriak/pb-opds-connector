@@ -13,6 +13,7 @@ An OPDS connector for PocketBook e-readers. Browse catalogs and download books s
     * Gutenberg
     * Standard Ebooks
 * [**Synchronization:**](#synchronization) Download all books of a list (a Calibre-Web shelf, for example) that are not on the reader yet, in one go.
+* [**Updates:**](#updates) The app can update itself from its GitHub releases, when you ask for it.
 * [**Search:**](#search) Catalogs that offer a search show a "Search" row at the top of each list.
 * **Format selection:** Choose from the formats a catalog offers. A progress bar shows the download.
 * **Download handling:** Books are saved to the Downloads folder and show up in the library right away, without a restart.
@@ -79,7 +80,8 @@ server.1.url=https://www.gutenberg.org/ebooks.opds/
 ```
 
 * The numbers start at 0 and must follow each other. The list ends at the first missing number.
-* `user`, `password`, `calibre_web`, `timeout` and `sync` can be left out. The URL rules above apply here as well.
+* `user`, `password`, `calibre_web`, `timeout` and `sync` can be left out.
+* `updates=` sets which updates the app offers, see [Updates](#updates). The URL rules above apply here as well.
 * Without `defaults_added=1` the default catalogs are put in front of your servers on the next start, and the line is added.
 * The app rewrites the file whenever you add, edit or delete a server on the reader, from the list it loaded at start. Close the app completely (also in the task switcher) before editing the file, or your changes are overwritten.
 * **The last line, like `#f78a2ef5`, is a checksum** the reader adds when it saves the file. If it does not match the content, the reader silently uses the previous version, `opds-connector.cfg.back`, and your changes are lost. After editing the file, fix the checksum with `python3 scripts/fix-config-checksum.py opds-connector.cfg`.
@@ -113,6 +115,31 @@ Many catalogs can be searched. If a catalog offers this, every list inside it st
 * If nothing matches, the app shows "Nothing found." and stays on the current list.
 * This also works for servers you added yourself, as long as they offer a search. Calibre and Calibre-Web do.
 
+
+## Updates
+
+Builds from the [GitHub releases](https://github.com/Aluriak/pb-opds-connector/releases) can update themselves. The last row of the start screen, "Check for updates", shows the installed version.
+
+1. Open "Check for updates". The app looks for a newer build.
+2. If there is one, it shows its version, whether it is a release or a nightly build, and asks whether to install it.
+3. After "Install", close the app and open it again.
+
+Two kinds of builds are offered:
+
+* **Releases**: versions that were tagged, offered when their version number is higher than the installed one.
+* **Nightly builds**: built from every change to the code, offered when they were built from another change than the installed one. They are newer, and less tested.
+
+Choose what is offered with a line in [the configuration file](#configuration-file):
+
+| Line | Effect |
+|---|---|
+| `updates=all` | Releases and nightly builds. This is the default. |
+| `updates=stable` | Releases only. |
+| `updates=off` | No "Check for updates" row. |
+
+If an update does not start, copy the app onto the reader by hand again, as when installing it.
+
+**Publishing a release** (for maintainers): set the new version in `build.zig.zon`, push it to `main`, then push a tag `v<version>`, e.g. `git tag v0.4.0 && git push origin v0.4.0`. The build workflow publishes it.
 
 ## Debugging
 

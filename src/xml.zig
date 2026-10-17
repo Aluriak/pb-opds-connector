@@ -159,7 +159,7 @@ pub const Entry = struct {
         }
     }
 
-    pub const Action = enum { none, search, sync };
+    pub const Action = enum { none, search, sync, update };
 
     /// The name a synchronized book is saved under: "opds-<hash of the id>.<ext>". It depends on
     /// the id only, so a book is found again after its title or author changed.

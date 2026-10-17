@@ -3,6 +3,8 @@ const net = @import("net.zig");
 const xml = @import("xml.zig");
 const server_form = @import("server_form.zig");
 const download = @import("download.zig");
+const update = @import("update.zig");
+const Policy = @import("update_check.zig").Policy;
 const search = @import("search.zig");
 const pocketbook = @import("pocketbook.zig");
 const trace = pocketbook.trace;
@@ -57,6 +59,8 @@ var author_font: ?*pb.ifont = null;
 
 /// A list of servers, that show up on the start screen
 var catalogs: Catalogs = .{};
+/// Which updates the start screen offers, read from the configuration
+var update_policy: Policy = .off;
 
 /// The server an action (edit, delete) is ongoing for
 var server_index: ?usize = null;
@@ -150,6 +154,10 @@ fn listHandler(action: c_int, x: c_int, y: c_int, idx: c_int, state: c_int) call
             const entry = feed.entries[@intCast(idx)];
 
             if (feeds.items.len == 1) {
+                if (entry.action == .update) {
+                    update.checkForUpdate(update_policy);
+                    return 1;
+                }
                 // The row after the last catalog is "Add server"
                 if (idx == catalogs.servers.items.len) {
                     // Necessarry, as we otherwise would overwrite the previously entered data.
@@ -242,11 +250,19 @@ fn rebuildCatalogRows() !void {
     // The rows live in the arena of the start screen, the old ones are dropped
     _ = start_screen.arena.reset(.retain_capacity);
 
-    const rows = try start_screen.arena.allocator().alloc(xml.Entry, catalogs.servers.items.len + 1);
+    update_policy = if (update.enabled) configuration.updatePolicy() else .off;
+    const allocator = start_screen.arena.allocator();
+    const extra_rows: usize = if (update_policy == .off) 1 else 2;
+    const rows = try allocator.alloc(xml.Entry, catalogs.servers.items.len + extra_rows);
     for (catalogs.servers.items, 0..) |server, i| {
         rows[i] = .{ .title = server.name, .author = server.url, .nav_url = server.url };
     }
-    rows[rows.len - 1] = .{ .title = "+ Add server", .summary = "Calibre or another OPDS server" };
+    rows[catalogs.servers.items.len] = .{ .title = "+ Add server", .summary = "Calibre or another OPDS server" };
+    if (update_policy != .off) {
+        var buf: [128]u8 = undefined;
+        const installed = try allocator.dupeSentinel(u8, update.describeInstalled(&buf), 0);
+        rows[rows.len - 1] = .{ .action = .update, .title = "Check for updates", .summary = installed };
+    }
 
     start_screen.entries = rows;
     start_screen.pos = @min(start_screen.pos, @as(c_int, @intCast(rows.len - 1)));
