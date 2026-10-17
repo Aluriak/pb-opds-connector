@@ -123,7 +123,7 @@ fn installAnswered(button: c_int) callconv(.c) void {
 /// The running app goes on with the old file, the new one is used from the next start.
 fn install(info: check.Info) !void {
     var url_buf: [256]u8 = undefined;
-    const url = try std.fmt.bufPrintSentinel(&url_buf, "https://github.com/{s}/releases/download/{s}/opds-connector-{s}.app", .{ repo, info.tag, build_options.platform }, 0);
+    const url = try std.fmt.bufPrintSentinel(&url_buf, "https://github.com/{s}/releases/download/{s}/opds-connector-{s}.bin", .{ repo, info.tag, build_options.platform }, 0);
 
     var exe_buf: [256]u8 = undefined;
     const exe = ownPath(&exe_buf);

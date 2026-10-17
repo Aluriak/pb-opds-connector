@@ -91,8 +91,8 @@ jobs:
           for platform in allwinner rk3566; do
             (cd zig-out/$platform/bin && zip -9 "$GITHUB_WORKSPACE/dist/opds-connector-$platform.zip" "OPDS Connector.app")
             (cd zig-out/debug-$platform/bin && zip -9 "$GITHUB_WORKSPACE/dist/opds-connector-$platform-debug.zip" "OPDS Connector.bin" opds-debug.app)
-            # Unzipped, for the app to update itself
-            cp "zig-out/$platform/bin/OPDS Connector.app" "dist/opds-connector-$platform.app"
+            # Unzipped, for the app to update itself. GitHub refuses files ending in .app
+            cp "zig-out/$platform/bin/OPDS Connector.app" "dist/opds-connector-$platform.bin"
           done
           {
             echo "channel=$CHANNEL"
