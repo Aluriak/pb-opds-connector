@@ -26,6 +26,14 @@ An OPDS connector for PocketBook e-readers. Browse catalogs and download books s
 
 ## Configuration
 
+**Bot detection**
+
+The OPDS connector tries to behave like a normal _Desktop client_, but cannot
+fully ensure to be not catagorized as a bot, f. ex. by Cloudflares bot protection.
+
+If you experience problems with servers or run into Bot detection issues, try
+enabling _HTTP/1.1_ in the catalog connection settings.
+
 ### Custom server
 
 Besides the built-in catalogs you can add your own OPDS servers, for example Calibre or Calibre-Web.
