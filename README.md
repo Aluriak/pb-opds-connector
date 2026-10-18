@@ -89,9 +89,11 @@ Many catalogs can be searched. If a catalog offers this, every list inside it st
 Only firmware 6.x is supported. Anything older is not supported and will not work.
 
 | Firmware | Platform | Devices | Status |
-|---|---|---|---|
-| 6.11 | `allwinner` | Era Lite (PB710) | ✅ Tested |
-| 6.x | `allwinner` | Allwinner B288 models: Era, InkPad 4, InkPad Lite, Verse, Verse Pro, Touch HD 3 | ❔ Untested, expected to work |
+|------|-------------|----------------------|-----------|
+| 6.11 | `allwinner` | PB Era Lite (PB710)  | ✅ Tested |
+|      |             | PB Verse (Pro)       | ✅ Tested |
+|      |             | Vivlio Touch HD Plus | ✅ Tested |
+| 6.x | `allwinner` | Allwinner B288 models: InkPad 4, InkPad Lite, Touch HD 3 | ❔ Untested, expected to work |
 | 6.x | `allwinner` | Allwinner B300 models: Era Color, Verse Pro Color, InkPad Color 2/3, InkPad X Pro | ❔ Untested |
 | 6.11 | `rk3566` | Rockchip RK3566 models: Verta, Verta Color, InkPad One, PocketBook Q | ❔ Untested, expected to work |
 
