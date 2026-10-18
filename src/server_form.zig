@@ -14,15 +14,29 @@ var config: ?*pb.iconfig = null;
 pub const DoneFn = *const fn (entered: anyerror!?Server) void;
 var on_done: DoneFn = undefined;
 
+const OnOff = enum {
+    off,
+    on,
+
+    var variants: [names.len:null]?[*:0]u8 = blk: {
+        var labels: [names.len:null]?[*:0]u8 = undefined;
+        for (names, 0..) |name, i| labels[i] = @constCast(name.ptr);
+        break :blk labels;
+    };
+    const names = std.meta.fieldNames(OnOff);
+};
+
 const ServerField = struct {
     label: [:0]const u8 = "",
     value: [:0]const u8 = "",
+    type: c_int = pb.CFG_TEXT,
 };
 const ServerFields = struct {
     name: ServerField = .{ .label = "Name" },
     url: ServerField = .{ .label = "URL" },
     user: ServerField = .{ .label = "User name (optional)" },
-    password: ServerField = .{ .label = "Password (optional)" },
+    password: ServerField = .{ .label = "Password (optional)", .type = pb.CFG_PASSWORD },
+    use_http_11: ServerField = .{ .label = "Use HTTP/1.1", .value = "0", .type = pb.CFG_INDEX },
 
     const names = @typeInfo(ServerFields).@"struct".field_names;
 
@@ -32,6 +46,7 @@ const ServerFields = struct {
         fields.url.value = server.url;
         fields.user.value = server.user;
         fields.password.value = server.password;
+        fields.use_http_11.value = if (server.use_http_11) "1" else "0";
         return fields;
     }
 
@@ -40,10 +55,12 @@ const ServerFields = struct {
         var rows: [names.len + 1]pb.iconfigedit = undefined;
         inline for (names, 0..) |field, i| {
             rows[i] = .{
-                .type = if (std.mem.eql(u8, field, "password")) pb.CFG_PASSWORD else pb.CFG_TEXT,
+                .type = @field(empty, field).type,
                 .text = @constCast(@field(empty, field).label.ptr),
                 .name = @constCast(field.ptr),
                 .deflt = @constCast(""),
+                // Every choice row is an on/off row
+                .variants = if (@field(empty, field).type == pb.CFG_INDEX) @ptrCast(&OnOff.variants) else null,
             };
         }
         // An empty row ends the form
@@ -113,7 +130,15 @@ fn closeForm(open_config: *pb.iconfig) !?Server {
     const fields = ServerFields.read(open_config);
     const name = std.mem.trim(u8, fields.name.value, " ");
     const address = std.mem.trim(u8, fields.url.value, " ");
+    const use_http_11 = std.mem.eql(u8, fields.use_http_11.value, "1");
     if (name.len == 0 or address.len == 0) return null;
 
-    return try Server.init(allocator, name, address, fields.user.value, fields.password.value);
+    return try Server.init(
+        allocator,
+        name,
+        address,
+        fields.user.value,
+        fields.password.value,
+        use_http_11,
+    );
 }
