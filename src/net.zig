@@ -3,7 +3,10 @@ const std = @import("std");
 const curl = @import("libcurl.zig");
 const Server = @import("server.zig").Server;
 
-const user_agent = "pb-opds-connector/" ++ @import("build_options").version;
+const ec_curves = "X25519:P-256";
+
+const user_agent = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36";
+const accept = "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8";
 
 /// The custom server the user is browsing, null for the built-in catalogs
 var server: ?Server = null;
@@ -52,13 +55,27 @@ fn perform(url: [:0]const u8, target: Target) !void {
 
     _ = curl.curl_easy_setopt(handle, curl.CURLOPT_URL, url.ptr);
     _ = curl.curl_easy_setopt(handle, curl.CURLOPT_USERAGENT, user_agent);
+
+    // Set headers
+    const headers = curl.curl_slist_append(null, accept) orelse return error.CurlInitFailed;
+    defer curl.curl_slist_free_all(headers);
+    _ = curl.curl_easy_setopt(handle, curl.CURLOPT_HTTPHEADER, headers);
+
     _ = curl.curl_easy_setopt(handle, curl.CURLOPT_TIMEOUT, @as(c_long, 120));
     _ = curl.curl_easy_setopt(handle, curl.CURLOPT_CONNECTTIMEOUT, @as(c_long, 5));
     _ = curl.curl_easy_setopt(handle, curl.CURLOPT_FOLLOWLOCATION, @as(c_long, 1));
     // Treat HTTP 4xx/5xx as an error instead of handing the error page to the caller
     _ = curl.curl_easy_setopt(handle, curl.CURLOPT_FAILONERROR, @as(c_long, 1));
 
+    // Same as `curl --curves`
+    _ = curl.curl_easy_setopt(handle, curl.CURLOPT_SSL_EC_CURVES, ec_curves);
+
     if (server) |s| {
+        // Same as `curl --http1.1`
+        if (s.use_http_11) {
+            _ = curl.curl_easy_setopt(handle, curl.CURLOPT_HTTP_VERSION, curl.CURL_HTTP_VERSION_1_1);
+        }
+
         if (s.hasLogin() and s.owns(url)) {
             var buf: [160]u8 = undefined;
             if (s.userpwd(&buf)) |userpwd| {

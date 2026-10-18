@@ -54,5 +54,7 @@ test:
 install:
 	@test -d "$(DEVICE)/applications" || { echo "No reader found at $(DEVICE)"; exit 1; }
 	cp -X "zig-out/bin/$(APP)" "$(DEVICE)/applications/$(APP)"
+	cp -X "scripts/opds-debug.app" "$(DEVICE)/applications/opds-debug.app"
 	@rm -f "$(DEVICE)/applications/._$(APP)"
+	@rm -f "$(DEVICE)/applications/._opds-debug.app"
 	diskutil unmount "$(DEVICE)"

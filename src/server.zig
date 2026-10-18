@@ -30,11 +30,19 @@ pub const Server = struct {
     user: [:0]const u8 = "",
     password: [:0]const u8 = "",
     internal: bool = false,
+    use_http_11: bool = false,
 
     /// Creates a server from what the user entered. This is the only place the address of a
     /// server is set: what was typed becomes the address of its catalog, with "http://" added
     /// when no scheme is given and the usual "/opds" path when there is none.
-    pub fn init(allocator: std.mem.Allocator, name: []const u8, address: []const u8, user: []const u8, password: []const u8) !Server {
+    pub fn init(
+        allocator: std.mem.Allocator,
+        name: []const u8,
+        address: []const u8,
+        user: []const u8,
+        password: []const u8,
+        use_http_11: bool,
+    ) !Server {
         const s_name = try allocator.dupeSentinel(u8, std.mem.trim(u8, name, " "), 0);
         errdefer allocator.free(s_name);
 
@@ -59,7 +67,13 @@ pub const Server = struct {
         // A password without a user name is of no use
         const s_password = try allocator.dupeSentinel(u8, if (s_user.len == 0) "" else password, 0);
 
-        return .{ .name = s_name, .url = s_url, .user = s_user, .password = s_password };
+        return .{
+            .name = s_name,
+            .url = s_url,
+            .user = s_user,
+            .password = s_password,
+            .use_http_11 = use_http_11,
+        };
     }
 
     pub fn free(server: Server, allocator: std.mem.Allocator) void {
@@ -92,7 +106,7 @@ pub const Server = struct {
 };
 
 fn expectUrl(expected: []const u8, address: []const u8) !void {
-    const server: Server = try .init(std.testing.allocator, "Test", address, "", "");
+    const server: Server = try .init(std.testing.allocator, "Test", address, "", "", false);
     defer server.free(std.testing.allocator);
     try std.testing.expectEqualStrings(expected, server.url);
 }
@@ -120,7 +134,7 @@ test "init leaves an address it produced itself unchanged" {
 
 test "init trims name and user name and copies everything" {
     var name = "  My Calibre ".*;
-    const server: Server = try .init(std.testing.allocator, &name, "calibre.lan", " alice ", "secret");
+    const server: Server = try .init(std.testing.allocator, &name, "calibre.lan", " alice ", "secret", true);
     defer server.free(std.testing.allocator);
     // The server must not point into what it was created from
     @memset(&name, 'x');
@@ -129,10 +143,11 @@ test "init trims name and user name and copies everything" {
     try std.testing.expectEqualStrings("alice", server.user);
     try std.testing.expectEqualStrings("secret", server.password);
     try std.testing.expect(server.hasLogin());
+    try std.testing.expect(server.use_http_11);
 }
 
 test "init drops a password that comes without a user name" {
-    const server: Server = try .init(std.testing.allocator, "Test", "calibre.lan", "  ", "secret");
+    const server: Server = try .init(std.testing.allocator, "Test", "calibre.lan", "  ", "secret", false);
     defer server.free(std.testing.allocator);
 
     try std.testing.expectEqualStrings("", server.password);
@@ -157,10 +172,10 @@ test "owns tells other servers apart" {
 }
 
 test "init refuses what is not an address" {
-    try std.testing.expectError(error.InvalidAddress, Server.init(std.testing.allocator, "Test", "calibre.lan:port", "", ""));
-    try std.testing.expectError(error.InvalidAddress, Server.init(std.testing.allocator, "Test", "http://", "", ""));
-    try std.testing.expectError(error.InvalidAddress, Server.init(std.testing.allocator, "Test", "this is wrong", "", ""));
-    try std.testing.expectError(error.InvalidAddress, Server.init(std.testing.allocator, "Test", "calibre_lan", "", ""));
+    try std.testing.expectError(error.InvalidAddress, Server.init(std.testing.allocator, "Test", "calibre.lan:port", "", "", false));
+    try std.testing.expectError(error.InvalidAddress, Server.init(std.testing.allocator, "Test", "http://", "", "", false));
+    try std.testing.expectError(error.InvalidAddress, Server.init(std.testing.allocator, "Test", "this is wrong", "", "", false));
+    try std.testing.expectError(error.InvalidAddress, Server.init(std.testing.allocator, "Test", "calibre_lan", "", "", false));
 }
 
 test "userpwd joins user name and password for curl" {

@@ -2,7 +2,7 @@ const std = @import("std");
 const pb = @import("c");
 
 const Server = @import("server.zig").Server;
-const Field = enum { name, url, user, password };
+const Field = enum { name, url, user, password, use_http_11 };
 
 /// PocketBooks location for storing configuration of applications.
 pub const config_path = "/mnt/ext1/system/config/opds-connector.cfg";
@@ -28,6 +28,7 @@ pub fn load(allocator: std.mem.Allocator, servers: *std.ArrayList(Server)) !void
             std.mem.span(pb.ReadString(config, key(&buf, i, .url), "")),
             std.mem.span(pb.ReadString(config, key(&buf, i, .user), "")),
             std.mem.span(pb.ReadString(config, key(&buf, i, .password), "")),
+            pb.ReadInt(config, key(&buf, i, .use_http_11), 0) != 0,
         ) catch |err| switch (err) {
             // An invalid entry must not break the whole loading process.
             // Just skip it.
@@ -50,12 +51,13 @@ pub fn store(servers: []const Server) void {
         pb.WriteString(config, key(&buf, i, .url), server.url.ptr);
         pb.WriteString(config, key(&buf, i, .user), server.user.ptr);
         pb.WriteString(config, key(&buf, i, .password), server.password.ptr);
+        pb.WriteInt(config, key(&buf, i, .use_http_11), @intFromBool(server.use_http_11));
     }
 
     // A deleted server leaves the entry after the last one behind.
     // We do not want that.
     var buf: [32]u8 = undefined;
-    inline for (.{ Field.name, Field.url, Field.user, Field.password }) |field| {
+    inline for (std.meta.tags(Field)) |field| {
         pb.DeleteString(config, key(&buf, servers.len, field));
     }
 
