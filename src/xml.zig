@@ -18,6 +18,9 @@ pub const BookFormat = enum {
     pdf,
     fb2,
     fb2_zip,
+    mobi,
+    azw3,
+    txt,
 
     pub fn fromMime(mime: []const u8) ?BookFormat {
         if (std.mem.startsWith(u8, mime, "application/epub")) return .epub;
@@ -25,6 +28,10 @@ pub const BookFormat = enum {
         if (std.mem.startsWith(u8, mime, "application/fb2+zip")) return .fb2_zip;
         if (std.mem.startsWith(u8, mime, "application/fb2")) return .fb2;
         if (std.mem.startsWith(u8, mime, "application/x-fictionbook")) return .fb2;
+        if (std.mem.startsWith(u8, mime, "application/x-mobipocket-ebook")) return .mobi;
+        if (std.mem.startsWith(u8, mime, "application/x-mobi8-ebook")) return .azw3;
+        if (std.mem.startsWith(u8, mime, "text/plain")) return .txt;
+
         return null;
     }
 
@@ -34,6 +41,9 @@ pub const BookFormat = enum {
             .pdf => "pdf",
             .fb2 => "fb2",
             .fb2_zip => "fb2.zip",
+            .mobi => "mobi",
+            .azw3 => "azw3",
+            .txt => "txt",
         };
     }
 };
@@ -372,6 +382,9 @@ test "saveName uses the extension of the format" {
     try expectSaveName("Austen, Jane - Emma.pdf", entry, .pdf);
     try expectSaveName("Austen, Jane - Emma.fb2", entry, .fb2);
     try expectSaveName("Austen, Jane - Emma.fb2.zip", entry, .fb2_zip);
+    try expectSaveName("Austen, Jane - Emma.mobi", entry, .mobi);
+    try expectSaveName("Austen, Jane - Emma.azw3", entry, .azw3);
+    try expectSaveName("Austen, Jane - Emma.txt", entry, .txt);
 }
 
 test "saveName leaves out the author part when there is no author" {
@@ -413,7 +426,6 @@ fn expectDetail(expected: []const u8, entry: Entry) !void {
     try std.testing.expectEqualStrings(expected, entry.detail(&buf));
 }
 
-/// A download of the given format
 fn testDownload(format: BookFormat) Download {
     return .{ .url = "http://example.com/book123", .format = format };
 }
@@ -452,7 +464,6 @@ test "detail stops when the buffer is full" {
     var buf: [16]u8 = undefined;
     const entry: Entry = .{ .author = "Austen", .downloads = &.{ testDownload(.epub), testDownload(.fb2_zip) } };
 
-    // "Austen - EPUB" fits into the 15 usable bytes, ", FB2.ZIP" does not
     try std.testing.expectEqualStrings("Austen - EPUB", entry.detail(&buf));
 }
 
@@ -474,6 +485,24 @@ test "description names a download without a label after its format" {
     try expectDescription("EPUB", .{ .url = "", .format = .epub });
     try expectDescription("FB2.ZIP", .{ .url = "", .format = .fb2_zip });
     try expectDescription("PDF, 1.0 MB", .{ .url = "", .format = .pdf, .size = 1024 * 1024 });
+}
+
+test "fromMime knows the formats the reader opens" {
+    try std.testing.expectEqual(.epub, BookFormat.fromMime("application/epub+zip"));
+    try std.testing.expectEqual(.pdf, BookFormat.fromMime("application/pdf"));
+    try std.testing.expectEqual(.fb2, BookFormat.fromMime("application/fb2"));
+    try std.testing.expectEqual(.fb2, BookFormat.fromMime("application/x-fictionbook+xml"));
+    try std.testing.expectEqual(.fb2_zip, BookFormat.fromMime("application/fb2+zip"));
+    try std.testing.expectEqual(.mobi, BookFormat.fromMime("application/x-mobipocket-ebook"));
+    try std.testing.expectEqual(.azw3, BookFormat.fromMime("application/x-mobi8-ebook"));
+    try std.testing.expectEqual(.txt, BookFormat.fromMime("text/plain"));
+    try std.testing.expectEqual(.txt, BookFormat.fromMime("text/plain; charset=utf-8"));
+}
+
+test "fromMime ignores what is not a book" {
+    try std.testing.expectEqual(null, BookFormat.fromMime("text/html"));
+    try std.testing.expectEqual(null, BookFormat.fromMime("image/jpeg"));
+    try std.testing.expectEqual(null, BookFormat.fromMime(""));
 }
 
 test "description falls back to a short text when it does not fit" {
