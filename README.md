@@ -14,6 +14,7 @@ An OPDS connector for PocketBook e-readers. Browse catalogs and download books s
     * Standard Ebooks
 * [**Search:**](#search) Catalogs that offer a search show a "Search" row at the top of each list.
 * **Format selection:** Choose from the formats a catalog offers. A progress bar shows the download.
+  * Supported: `epub`, `pdf`, `fb2`, `fb2+zip`, `mobi`, `azw3`, `txt`
 * **Download handling:** Books are saved to the Downloads folder and show up in the library right away, without a restart.
 
 ## Usage
