@@ -14,6 +14,7 @@ pub const CURLOPT_CONNECTTIMEOUT: c_int = 78;
 pub const CURLOPT_HTTP_VERSION: c_int = 84;
 pub const CURLOPT_HTTPAUTH: c_int = 107;
 pub const CURLOPT_WRITEDATA: c_int = 10001;
+pub const CURLOPT_ERRORBUFFER: c_int = 10010;
 pub const CURLOPT_URL: c_int = 10002;
 pub const CURLOPT_USERPWD: c_int = 10005;
 pub const CURLOPT_USERAGENT: c_int = 10018;
@@ -21,10 +22,14 @@ pub const CURLOPT_HTTPHEADER: c_int = 10023;
 pub const CURLOPT_SSL_EC_CURVES: c_int = 10298;
 pub const CURLOPT_WRITEFUNCTION: c_int = 20011;
 pub const CURLOPT_XFERINFOFUNCTION: c_int = 20219;
+pub const CURLINFO_RESPONSE_CODE: c_int = 0x200002;
+/// The size curl expects for CURLOPT_ERRORBUFFER
+pub const CURL_ERROR_SIZE = 256;
 
 pub extern fn curl_easy_init() ?*CURL;
 pub extern fn curl_easy_setopt(handle: *CURL, option: c_int, ...) c_int;
 pub extern fn curl_easy_perform(handle: *CURL) c_int;
+pub extern fn curl_easy_getinfo(handle: *CURL, info: c_int, ...) c_int;
 pub extern fn curl_easy_cleanup(handle: *CURL) void;
 pub extern fn curl_slist_append(list: ?*curl_slist, string: [*:0]const u8) ?*curl_slist;
 pub extern fn curl_slist_free_all(list: ?*curl_slist) void;

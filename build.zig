@@ -72,7 +72,7 @@ pub fn build(b: *std.Build) void {
     // `zig build test` runs the unit tests on the build machine, for the files that need
     // nothing from the reader (InkView, curl).
     const test_step = b.step("test", "Run the unit tests");
-    for ([_][]const u8{ "src/server.zig", "src/xml.zig" }) |file| {
+    for ([_][]const u8{ "src/server.zig", "src/xml.zig", "src/failure.zig" }) |file| {
         const tests = b.addTest(.{
             .root_module = b.createModule(.{
                 .root_source_file = b.path(file),
