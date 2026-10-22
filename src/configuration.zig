@@ -3,7 +3,7 @@ const pb = @import("c");
 
 const Server = @import("server.zig").Server;
 const Catalogs = @import("server.zig").Catalogs;
-const Field = enum { name, url, user, password, use_http_11, basic_auth, timeout };
+const Field = enum { name, url, user, password, use_http_11, basic_auth, timeout, sync };
 
 /// PocketBooks location for storing configuration of applications.
 pub const config_path = "/mnt/ext1/system/config/opds-connector.cfg";
@@ -49,6 +49,7 @@ fn read(allocator: std.mem.Allocator, servers: *std.ArrayList(Server)) !bool {
                 .use_http_11 = pb.ReadInt(config, key(&buf, i, .use_http_11), 0) != 0,
                 .basic_auth = pb.ReadInt(config, key(&buf, i, .basic_auth), 0) != 0,
                 .timeout = std.math.cast(u16, pb.ReadInt(config, key(&buf, i, .timeout), 0)) orelse 0,
+                .sync = pb.ReadInt(config, key(&buf, i, .sync), 0) != 0,
             },
         ) catch |err| switch (err) {
             // An invalid entry must not break the whole loading process.
@@ -84,6 +85,7 @@ pub fn store(servers: []const Server) void {
         pb.WriteInt(config, key(&buf, i, .use_http_11), @intFromBool(server.options.use_http_11));
         pb.WriteInt(config, key(&buf, i, .basic_auth), @intFromBool(server.options.basic_auth));
         pb.WriteInt(config, key(&buf, i, .timeout), server.options.timeout);
+        pb.WriteInt(config, key(&buf, i, .sync), @intFromBool(server.options.sync));
     }
 
     // A deleted server leaves the entry after the last one behind.

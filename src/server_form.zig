@@ -39,6 +39,7 @@ const ServerFields = struct {
     use_http_11: ServerField = .{ .label = "Use HTTP/1.1", .value = "0", .type = pb.CFG_INDEX },
     basic_auth: ServerField = .{ .label = "Send the login right away (Calibre-Web)", .value = "0", .type = pb.CFG_INDEX },
     timeout: ServerField = .{ .label = "Connection timeout in seconds (optional)" },
+    sync: ServerField = .{ .label = "Allow full sync", .value = "0", .type = pb.CFG_INDEX },
 
     const names = @typeInfo(ServerFields).@"struct".field_names;
 
@@ -50,6 +51,7 @@ const ServerFields = struct {
         fields.password.value = server.password;
         fields.use_http_11.value = if (server.options.use_http_11) "1" else "0";
         fields.basic_auth.value = if (server.options.basic_auth) "1" else "0";
+        fields.sync.value = if (server.options.sync) "1" else "0";
         fields.timeout.value = if (server.options.timeout > 0)
             std.fmt.bufPrintSentinel(&timeout_text, "{d}", .{server.options.timeout}, 0) catch ""
         else
@@ -159,6 +161,7 @@ fn closeForm(open_config: *pb.iconfig) !?Server {
     const options: Server.Options = .{
         .use_http_11 = std.mem.eql(u8, fields.use_http_11.value, "1"),
         .basic_auth = std.mem.eql(u8, fields.basic_auth.value, "1"),
+        .sync = std.mem.eql(u8, fields.sync.value, "1"),
         // Anything but a number keeps the default
         .timeout = std.fmt.parseInt(u16, std.mem.trim(u8, fields.timeout.value, " "), 10) catch 0,
     };

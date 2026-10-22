@@ -12,6 +12,7 @@ An OPDS connector for PocketBook e-readers. Browse catalogs and download books s
     * ManyBooks
     * Gutenberg
     * Standard Ebooks
+* [**Synchronization:**](#synchronization) Download all books of a list (a Calibre-Web shelf, for example) that are not on the reader yet, in one go.
 * [**Search:**](#search) Catalogs that offer a search show a "Search" row at the top of each list.
 * **Format selection:** Choose from the formats a catalog offers. A progress bar shows the download.
   * Supported: `epub`, `pdf`, `fb2`, `fb2+zip`, `mobi`, `azw3`, `txt`
@@ -50,6 +51,7 @@ Besides the default catalogs you can add your own OPDS servers, for example Cali
 | Password | no | Only used together with a user name. |
 | Use HTTP/1.1 | no | See "Bot detection" above. |
 | Send the login right away | no | Set it for Calibre-Web. Otherwise every request first goes out without the login, to learn which method the server wants, and Calibre-Web counts that as a failed login: after three a minute it refuses the login for a while. |
+| Allow full sync | no | Lists of books of this server get a "Synchronize" row, see [Synchronization](#synchronization). |
 | Connection timeout | no | Seconds to wait for the server to answer the connection, 5 when empty. Raise it for a slow or distant server. |
 
 **What happens to the URL**
@@ -94,6 +96,15 @@ server.1.use_http_11=1
 
 * The user name and password are stored unencrypted on the reader, in [the configuration file](#configuration-file). Anyone with access to the reader's storage can read them.
 * They are only sent to the server you entered, never to another server a catalog links to.
+
+## Synchronization
+
+For a server with "Allow full sync" set to "on", every list of books starts with a "Synchronize" row (after "Search", if there is one). Opening it loads the whole list, then downloads each book that is not on the reader yet, in EPUB if the catalog offers it. A summary tells how many were downloaded, already there or failed.
+
+* Books are recognized by the id the catalog gives them, not by title or author, so a book renamed in the catalog is not downloaded again. Calibre and Calibre-Web give every book such an id.
+* They are saved in the Downloads folder under names like `opds-3f2a9c41b07de815.epub`. The library shows them with their title and author as usual. Books you download by hand from such a server get the same kind of name, so a sync does not fetch them a second time.
+* Nothing is ever deleted or replaced. A book removed from the list stays on the reader, and a book whose file changed in the catalog is not downloaded again.
+* The sync runs while the app is open. If it is cut short, open "Synchronize" again: what is already on the reader is skipped.
 
 ## Search
 

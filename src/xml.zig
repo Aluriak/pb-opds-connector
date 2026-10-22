@@ -10,6 +10,9 @@ const max_title_in_filename = 120;
 /// "<author> - <title>.<ext>" at its longest
 pub const max_filename = max_author_in_filename + " - ".len + max_title_in_filename + ".fb2.zip".len;
 
+/// "opds-<16 hex digits>.<ext>" at its longest
+pub const max_sync_name = "opds-".len + 16 + ".fb2.zip".len;
+
 /// Upper bound per entry, so the format menu always fits on the screen
 pub const max_downloads = 8;
 
@@ -77,6 +80,10 @@ pub const Download = struct {
 /// This mirrors the structure of an entry element defined for the opds.
 /// See: https://specs.opds.io/opds-1.1.html
 pub const Entry = struct {
+    /// The <id> the catalog gives the entry. It stays the same when the title or author change.
+    id: [:0]const u8 = "",
+    /// Rows the app adds in front of a list do something instead of opening an entry
+    action: Action = .none,
     title: [:0]const u8 = "",
     author: [:0]const u8 = "",
     nav_url: ?[:0]const u8 = null,
@@ -160,6 +167,14 @@ pub const Entry = struct {
         } else if (entry.nav_url == null) {
             entry.nav_url = try resolveUrl(allocator, base, href);
         }
+    }
+
+    pub const Action = enum { none, search, sync };
+
+    /// The name a synchronized book is saved under: "opds-<hash of the id>.<ext>". It depends on
+    /// the id only, so a book is found again after its title or author changed.
+    pub fn syncName(entry: Entry, buf: *[max_sync_name]u8, format: BookFormat) []const u8 {
+        return std.fmt.bufPrint(buf, "opds-{x:0>16}.{s}", .{ std.hash.Wyhash.hash(0, entry.id), format.extension() }) catch unreachable;
     }
 
     /// Builds the name a download of this entry is saved under: "<author> - <title>.<ext>".
@@ -292,7 +307,9 @@ pub fn parseOpdsFeed(allocator: std.mem.Allocator, xml_data: []const u8, base_ur
                     continue;
                 };
 
-                if (std.mem.eql(u8, name, "title")) {
+                if (std.mem.eql(u8, name, "id")) {
+                    if (entry.id.len == 0) entry.id = try readText(allocator, reader);
+                } else if (std.mem.eql(u8, name, "title")) {
                     if (entry.title.len == 0) entry.title = try readText(allocator, reader);
                 } else if (std.mem.eql(u8, name, "author")) {
                     inside_author = true;
@@ -551,4 +568,34 @@ test "the direct search address wins over the description file, in any order" {
 test "a search link of an unknown kind is ignored" {
     try expectSearch(null, "<link rel=\"search\" type=\"text/html\" href=\"/search?q={searchTerms}\"/>");
     try expectSearch(null, "<link rel=\"search\" type=\"application/atom+xml\" href=\"/opds/all\"/>");
+}
+
+test "entries keep their id, the id of the feed itself is not taken" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const data =
+        \\<feed xmlns="http://www.w3.org/2005/Atom"><id>urn:feed</id>
+        \\<entry><id>urn:uuid:1b8f</id><title>Dune</title>
+        \\<link rel="http://opds-spec.org/acquisition" type="application/epub+zip" href="/get/epub/1"/></entry>
+        \\</feed>
+    ;
+    const feed = try parseOpdsFeed(arena.allocator(), data, "http://calibre.lan:8080/opds");
+    try std.testing.expectEqual(1, feed.entries.len);
+    try std.testing.expectEqualStrings("urn:uuid:1b8f", feed.entries[0].id);
+}
+
+test "syncName depends on the id and the format only" {
+    var a: [max_sync_name]u8 = undefined;
+    var b: [max_sync_name]u8 = undefined;
+    const before: Entry = .{ .id = "urn:uuid:1b8f", .title = "Dune", .author = "Frank Herbert" };
+    const after: Entry = .{ .id = "urn:uuid:1b8f", .title = "Dune (new edition)", .author = "F. Herbert" };
+    const other: Entry = .{ .id = "urn:uuid:2c9a", .title = "Dune", .author = "Frank Herbert" };
+
+    const name = before.syncName(&a, .epub);
+    try std.testing.expectEqualStrings(name, after.syncName(&b, .epub));
+    try std.testing.expect(!std.mem.eql(u8, name, other.syncName(&b, .epub)));
+    try std.testing.expect(std.mem.startsWith(u8, name, "opds-"));
+    try std.testing.expect(std.mem.endsWith(u8, name, ".epub"));
+    try std.testing.expectEqual(max_sync_name - ".fb2.zip".len + ".epub".len, name.len);
 }

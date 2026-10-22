@@ -56,9 +56,17 @@ fn menuHandler(index: c_int) callconv(.c) void {
     downloadBook(menu_entry, menu_entry.downloads[@intCast(index - 1)]);
 }
 
+/// The name a book is saved under. Books of a catalog that is synchronized are named after
+/// their id, so the sync finds them again whether they were downloaded by hand or not.
+fn fileName(entry: xml.Entry, format: xml.BookFormat, buf: *[xml.max_filename]u8) []const u8 {
+    const synced = if (net.currentServer()) |s| s.options.sync else false;
+    if (synced and entry.id.len > 0) return entry.syncName(buf[0..xml.max_sync_name], format);
+    return entry.saveName(buf, format);
+}
+
 fn downloadBook(entry: xml.Entry, download: xml.Download) void {
     var name_buf: [xml.max_filename]u8 = undefined;
-    const filename = entry.saveName(&name_buf, download.format);
+    const filename = fileName(entry, download.format, &name_buf);
 
     if (!pocketbook.ensureNetwork()) {
         pocketbook.showError("Could not download the book", error.NoNetwork);
@@ -76,7 +84,7 @@ fn downloadBook(entry: xml.Entry, download: xml.Download) void {
     pocketbook.rescanLibrary(download_dir);
 
     var msg_buf: [256]u8 = undefined;
-    const msg = std.fmt.bufPrintSentinel(&msg_buf, "Saved to Downloads:\n{s}", .{filename}, 0) catch "Saved to Downloads.";
+    const msg = std.fmt.bufPrintSentinel(&msg_buf, "Saved to Downloads:\n{s}", .{entry.title}, 0) catch "Saved to Downloads.";
     pb.Message(pb.ICON_INFORMATION, app_title, msg.ptr, 3000);
 }
 
@@ -91,4 +99,106 @@ fn onProgress(downloaded: u64, total: u64) void {
     const text = std.fmt.bufPrintSentinel(&buf, "{s}", .{utils.formatSize(&size_buf, downloaded)}, 0) catch return;
     const percent: c_int = if (total > 0) @intCast(@min(100, downloaded * 100 / total)) else 0;
     _ = pb.UpdateProgressbar(text.ptr, percent);
+}
+
+/// What a synchronization did
+const SyncResult = struct {
+    downloaded: usize = 0,
+    present: usize = 0,
+    failed: usize = 0,
+    /// Books without an id cannot be found again, so they are left out
+    skipped: usize = 0,
+};
+
+/// Downloads every book of `entries` that is not on the reader yet, one after the other.
+/// Nothing on the reader is deleted or replaced.
+pub fn synchronize(entries: []const xml.Entry) void {
+    if (!pocketbook.ensureNetwork()) {
+        pocketbook.showError("Could not synchronize", error.NoNetwork);
+        return;
+    }
+
+    var books: usize = 0;
+    for (entries) |entry| {
+        if (entry.downloads.len > 0) books += 1;
+    }
+
+    var result: SyncResult = .{};
+    var done: usize = 0;
+    pb.OpenProgressbar(pb.ICON_INFORMATION, "Synchronizing", "", 0, null);
+
+    for (entries) |entry| {
+        if (entry.downloads.len == 0) continue;
+        done += 1;
+
+        if (entry.id.len == 0) {
+            result.skipped += 1;
+            continue;
+        }
+        if (isPresent(entry)) {
+            result.present += 1;
+            continue;
+        }
+
+        var text_buf: [192]u8 = undefined;
+        const text = std.fmt.bufPrintSentinel(&text_buf, "{d}/{d}: {s}", .{ done, books, entry.title }, 0) catch "";
+        _ = pb.UpdateProgressbar(text.ptr, @intCast(done * 100 / books));
+
+        syncBook(entry, preferred(entry.downloads)) catch |err| {
+            trace("sync of {s} failed: {s}\n", .{ entry.id, @errorName(err) });
+            result.failed += 1;
+            continue;
+        };
+        result.downloaded += 1;
+    }
+
+    pb.CloseProgressbar();
+    if (result.downloaded > 0) pocketbook.rescanLibrary(download_dir);
+
+    var msg_buf: [256]u8 = undefined;
+    const msg = std.fmt.bufPrintSentinel(
+        &msg_buf,
+        "Synchronized: {d} downloaded, {d} already on the reader, {d} failed{s}",
+        .{ result.downloaded, result.present, result.failed, if (result.skipped > 0) ", some books have no id and were left out." else "." },
+        0,
+    ) catch "Synchronized.";
+    pb.Message(if (result.failed > 0) pb.ICON_WARNING else pb.ICON_INFORMATION, app_title, msg.ptr, 10000);
+}
+
+/// EPUB if the catalog offers it, the first format otherwise
+fn preferred(downloads: []const xml.Download) xml.Download {
+    for (downloads) |download| {
+        if (download.format == .epub) return download;
+    }
+    return downloads[0];
+}
+
+/// Whether the book is on the reader in any format
+fn isPresent(entry: xml.Entry) bool {
+    for (std.enums.values(xml.BookFormat)) |format| {
+        var name_buf: [xml.max_sync_name]u8 = undefined;
+        var path_buf: [256]u8 = undefined;
+        const path = std.fmt.bufPrintSentinel(&path_buf, "{s}/{s}", .{ download_dir, entry.syncName(&name_buf, format) }, 0) catch continue;
+        if (std.c.access(path.ptr, 0) == 0) return true;
+    }
+    return false;
+}
+
+/// Downloads under a temporary name first, so a download cut short is never taken for a book
+fn syncBook(entry: xml.Entry, download: xml.Download) !void {
+    var name_buf: [xml.max_sync_name]u8 = undefined;
+    const name = entry.syncName(&name_buf, download.format);
+
+    var part_buf: [xml.max_sync_name + ".part".len]u8 = undefined;
+    const part = try std.fmt.bufPrint(&part_buf, "{s}.part", .{name});
+    try net.download(download.url, download_dir, part, null);
+
+    var from_buf: [256]u8 = undefined;
+    var to_buf: [256]u8 = undefined;
+    const from = try std.fmt.bufPrintSentinel(&from_buf, "{s}/{s}", .{ download_dir, part }, 0);
+    const to = try std.fmt.bufPrintSentinel(&to_buf, "{s}/{s}", .{ download_dir, name }, 0);
+    if (std.c.rename(from.ptr, to.ptr) != 0) {
+        _ = std.c.unlink(from.ptr);
+        return error.CannotWriteFile;
+    }
 }
