@@ -4,6 +4,8 @@ const utils = @import("utils.zig");
 const Search = @import("search.zig").Search;
 
 const rel_acquisition = "http://opds-spec.org/acquisition";
+const rel_image = "http://opds-spec.org/image";
+const rel_thumbnail = "http://opds-spec.org/image/thumbnail";
 
 const max_author_in_filename = 60;
 const max_title_in_filename = 120;
@@ -87,6 +89,17 @@ pub const Entry = struct {
     /// Plain text description coming from the interface.
     /// Some catalogs (Project Gutenberg) put the author of a listed book here.
     summary: [:0]const u8 = "",
+    /// The whole description, HTML turned into text, for the sheet of the book
+    description: [:0]const u8 = "",
+    /// Pictures of the cover, full size and small
+    cover_url: ?[:0]const u8 = null,
+    thumbnail_url: ?[:0]const u8 = null,
+    /// The year the book was published, as the catalog gives it
+    year: [:0]const u8 = "",
+    language: [:0]const u8 = "",
+    publisher: [:0]const u8 = "",
+    /// Tags of the book, comma separated
+    categories: [:0]const u8 = "",
 
     /// Second line of the entry in a list: the author, for book files followed by the formats
     /// on offer. Entries without an author show their description.
@@ -137,6 +150,28 @@ pub const Entry = struct {
         // Different feeds use different fields:
         //   - Standard Books: Plain atom - enclosure
         //   - Others: XML feed - acquisition
+        const image: enum { none, cover, thumbnail } = if (std.mem.eql(u8, rel, rel_thumbnail) or std.mem.eql(u8, rel, "x-stanza-cover-image-thumbnail"))
+            .thumbnail
+        else if (std.mem.eql(u8, rel, rel_image) or std.mem.eql(u8, rel, "x-stanza-cover-image"))
+            .cover
+        else
+            .none;
+        if (image != .none) {
+            const href = try reader.attributeValueAlloc(allocator, href_index);
+            defer allocator.free(href);
+            const url = try resolveUrl(allocator, base, href);
+            switch (image) {
+                .cover => if (entry.cover_url == null) {
+                    entry.cover_url = url;
+                },
+                .thumbnail => if (entry.thumbnail_url == null) {
+                    entry.thumbnail_url = url;
+                },
+                .none => unreachable,
+            }
+            return;
+        }
+
         const is_acquisition = std.mem.startsWith(u8, rel, rel_acquisition) or std.mem.eql(u8, rel, "enclosure");
         // Unknown types (e.g. text/html shop pages) are not downloadable books
         const format = if (is_acquisition) BookFormat.fromMime(mime) orelse return else null;
@@ -327,10 +362,32 @@ pub fn parseOpdsFeed(allocator: std.mem.Allocator, xml_data: []const u8, base_ur
                 } else if (inside_author and std.mem.eql(u8, name, "name")) {
                     if (entry.author.len == 0) entry.author = try readText(allocator, reader);
                 } else if (std.mem.eql(u8, name, "content") or std.mem.eql(u8, name, "summary")) {
-                    // Only plain text, HTML descriptions are of no use in a list row
+                    // Only plain text goes in a list row, the sheet of the book takes any kind
                     const kind = if (reader.attributeIndex("type")) |i| reader.attributeValueRaw(i) else "text";
-                    if (entry.summary.len == 0 and std.mem.eql(u8, kind, "text")) {
-                        entry.summary = try readText(allocator, reader);
+                    const text = if (std.mem.eql(u8, kind, "xhtml"))
+                        try readRichText(allocator, reader)
+                    else if (std.mem.eql(u8, kind, "html"))
+                        try utils.htmlToText(allocator, try reader.readElementText())
+                    else
+                        try readText(allocator, reader);
+                    if (entry.summary.len == 0 and std.mem.eql(u8, kind, "text")) entry.summary = text;
+                    if (text.len > entry.description.len) entry.description = text;
+                } else if (std.mem.eql(u8, name, "issued") or std.mem.eql(u8, name, "published")) {
+                    // dc:issued is when the book came out, Atom's published may be too
+                    const text = try readText(allocator, reader);
+                    if (entry.year.len == 0 or std.mem.eql(u8, name, "issued")) entry.year = yearOf(text);
+                } else if (std.mem.eql(u8, name, "language")) {
+                    if (entry.language.len == 0) entry.language = try readText(allocator, reader);
+                } else if (std.mem.eql(u8, name, "publisher")) {
+                    if (entry.publisher.len == 0) entry.publisher = try readText(allocator, reader);
+                } else if (std.mem.eql(u8, name, "category")) {
+                    const index = reader.attributeIndex("label") orelse reader.attributeIndex("term");
+                    if (index) |i| {
+                        const label = std.mem.trim(u8, try reader.attributeValue(i), " ");
+                        if (label.len > 0) {
+                            const sep = if (entry.categories.len > 0) ", " else "";
+                            entry.categories = try std.fmt.allocPrintSentinel(allocator, "{s}{s}{s}", .{ entry.categories, sep, label }, 0);
+                        }
                     }
                 } else if (std.mem.eql(u8, name, "link")) {
                     try entry.readLink(allocator, reader, feed.base_uri, &downloads);
@@ -374,6 +431,53 @@ fn sameBook(entries: []Entry, entry: Entry, downloads: []const Download) ?*Entry
     if (!std.mem.eql(u8, previous.author, entry.author)) return null;
 
     return previous;
+}
+
+/// The year at the start of a date ("2019-04-01T00:00:00+00:00"), or the text when it has none
+fn yearOf(text: [:0]const u8) [:0]const u8 {
+    if (text.len > 4 and std.ascii.isDigit(text[0]) and std.ascii.isDigit(text[1]) and std.ascii.isDigit(text[2]) and std.ascii.isDigit(text[3]) and text[4] == '-') {
+        // The text is ours, from readText: the year ends where the month starts
+        const owned: [*]u8 = @constCast(text.ptr);
+        owned[4] = 0;
+        return text[0..4 :0];
+    }
+    return text;
+}
+
+/// The text of an element holding XHTML, with its paragraphs and line breaks
+fn readRichText(allocator: std.mem.Allocator, reader: *zigxml.Reader) ![:0]const u8 {
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(allocator);
+    var depth: usize = 0;
+    while (true) {
+        switch (try reader.read()) {
+            .element_start => {
+                depth += 1;
+                if (utils.isBlockTag(reader.elementNameNs().local)) try out.append(allocator, '\n');
+            },
+            .element_end => {
+                if (depth == 0) break;
+                depth -= 1;
+                if (utils.isBlockTag(reader.elementNameNs().local)) try out.append(allocator, '\n');
+            },
+            .text => try out.appendSlice(allocator, reader.textRaw()),
+            .cdata => try out.appendSlice(allocator, reader.cdataRaw()),
+            .character_reference => {
+                var utf8: [4]u8 = undefined;
+                const n = std.unicode.utf8Encode(reader.characterReferenceChar(), &utf8) catch 0;
+                try out.appendSlice(allocator, utf8[0..n]);
+            },
+            .entity_reference => {
+                const char = utils.decodeEntity(reader.entityReferenceName()) orelse '?';
+                var utf8: [4]u8 = undefined;
+                const n = std.unicode.utf8Encode(char, &utf8) catch 0;
+                try out.appendSlice(allocator, utf8[0..n]);
+            },
+            .eof => break,
+            else => {},
+        }
+    }
+    return utils.tidyText(allocator, out.items);
 }
 
 fn readText(allocator: std.mem.Allocator, reader: *zigxml.Reader) ![:0]const u8 {
@@ -575,6 +679,41 @@ test "entries keep their id, the id of the feed itself is not taken" {
     const feed = try parseOpdsFeed(arena.allocator(), data, "http://calibre.lan:8080/opds");
     try std.testing.expectEqual(1, feed.entries.len);
     try std.testing.expectEqualStrings("urn:uuid:1b8f", feed.entries[0].id);
+}
+
+test "the sheet of a book gets its description, cover and details" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const data =
+        \\<feed xmlns="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/terms/"><id>urn:feed</id>
+        \\<entry><id>urn:uuid:1b8f</id><title>Le Temps d'après</title>
+        \\<dc:issued>1996-01-01</dc:issued><dc:language>fra</dc:language><dc:publisher>Gallmeister</dc:publisher>
+        \\<category term="Roman" label="Roman"/><category term="SF"/>
+        \\<content type="xhtml"><div xmlns="http://www.w3.org/1999/xhtml"><p>Deux s&#339;urs.</p><p>La for&#234;t &amp; la maison.</p></div></content>
+        \\<link rel="http://opds-spec.org/image" type="image/jpeg" href="/opds/cover/1"/>
+        \\<link rel="http://opds-spec.org/image/thumbnail" type="image/jpeg" href="/opds/cover_240_240/1"/>
+        \\<link rel="http://opds-spec.org/acquisition" type="application/epub+zip" href="/get/epub/1"/></entry>
+        \\<entry><title>HTML</title><summary type="text">Short</summary><content type="html">&lt;p&gt;A &amp;amp; B&lt;/p&gt;&lt;p&gt;C&lt;/p&gt;</content>
+        \\<published>2019-04-01T00:00:00+00:00</published></entry>
+        \\</feed>
+    ;
+    const feed = try parseOpdsFeed(arena.allocator(), data, "http://calibre.lan:8080/opds");
+    const book = feed.entries[0];
+    try std.testing.expectEqualStrings("Deux sœurs.\n\nLa forêt & la maison.", book.description);
+    try std.testing.expectEqualStrings("", book.summary);
+    try std.testing.expectEqualStrings("http://calibre.lan:8080/opds/cover/1", book.cover_url.?);
+    try std.testing.expectEqualStrings("http://calibre.lan:8080/opds/cover_240_240/1", book.thumbnail_url.?);
+    try std.testing.expectEqualStrings("1996", book.year);
+    try std.testing.expectEqualStrings("fra", book.language);
+    try std.testing.expectEqualStrings("Gallmeister", book.publisher);
+    try std.testing.expectEqualStrings("Roman, SF", book.categories);
+    try std.testing.expectEqual(1, book.downloads.len);
+
+    const other = feed.entries[1];
+    try std.testing.expectEqualStrings("Short", other.summary);
+    try std.testing.expectEqualStrings("A & B\n\nC", other.description);
+    try std.testing.expectEqualStrings("2019", other.year);
 }
 
 test "syncName gives author and title, then the tag of the id" {

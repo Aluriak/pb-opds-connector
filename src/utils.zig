@@ -121,3 +121,115 @@ test "formatSize shows megabytes with one decimal from 1 MB on" {
     try expectSize("1.9 MB", 2 * 1024 * 1024 - 1);
     try expectSize("23.6 MB", 24836548);
 }
+
+/// Plain text from the HTML of a book description: tags removed, paragraphs and line
+/// breaks kept as line breaks, the common entities decoded, spaces tidied
+pub fn htmlToText(allocator: std.mem.Allocator, html: []const u8) ![:0]const u8 {
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(allocator);
+    var i: usize = 0;
+    while (i < html.len) {
+        const c = html[i];
+        if (c == '<') {
+            const end = std.mem.indexOfScalarPos(u8, html, i, '>') orelse html.len;
+            const tag = html[i + 1 .. end];
+            if (isBlockTag(tag)) try out.append(allocator, '\n');
+            i = end + 1;
+        } else if (c == '&') {
+            const end = std.mem.indexOfScalarPos(u8, html, i, ';');
+            if (end != null and end.? - i <= 10) {
+                if (decodeEntity(html[i + 1 .. end.?])) |char| {
+                    var utf8: [4]u8 = undefined;
+                    const n = std.unicode.utf8Encode(char, &utf8) catch 0;
+                    try out.appendSlice(allocator, utf8[0..n]);
+                    i = end.? + 1;
+                    continue;
+                }
+            }
+            try out.append(allocator, c);
+            i += 1;
+        } else {
+            try out.append(allocator, c);
+            i += 1;
+        }
+    }
+    return tidyText(allocator, out.items);
+}
+
+/// Whether a tag (what is between < and >) starts a new line of text
+pub fn isBlockTag(tag: []const u8) bool {
+    const name_start: usize = if (tag.len > 0 and tag[0] == '/') 1 else 0;
+    var name_end = name_start;
+    while (name_end < tag.len and std.ascii.isAlphanumeric(tag[name_end])) name_end += 1;
+    const name = tag[name_start..name_end];
+    const blocks = [_][]const u8{ "p", "br", "div", "li", "h1", "h2", "h3", "h4", "h5", "h6", "tr", "blockquote" };
+    for (blocks) |block| {
+        if (std.ascii.eqlIgnoreCase(name, block)) return true;
+    }
+    return false;
+}
+
+/// The character of an entity name ("amp", "#233", "#xE9"), null if unknown
+pub fn decodeEntity(name: []const u8) ?u21 {
+    if (name.len > 1 and name[0] == '#') {
+        const value = if (name[1] == 'x' or name[1] == 'X')
+            std.fmt.parseInt(u21, name[2..], 16)
+        else
+            std.fmt.parseInt(u21, name[1..], 10);
+        return value catch null;
+    }
+    const names = [_]struct { []const u8, u21 }{
+        .{ "amp", '&' },      .{ "lt", '<' },       .{ "gt", '>' },        .{ "quot", '"' },
+        .{ "apos", '\'' },    .{ "nbsp", 0xA0 },    .{ "rsquo", 0x2019 },  .{ "lsquo", 0x2018 },
+        .{ "ldquo", 0x201C }, .{ "rdquo", 0x201D }, .{ "hellip", 0x2026 }, .{ "mdash", 0x2014 },
+        .{ "ndash", 0x2013 }, .{ "laquo", 0xAB },   .{ "raquo", 0xBB },    .{ "eacute", 0xE9 },
+        .{ "egrave", 0xE8 },  .{ "agrave", 0xE0 },  .{ "ccedil", 0xE7 },   .{ "ecirc", 0xEA },
+    };
+    for (names) |entry| {
+        if (std.mem.eql(u8, name, entry[0])) return entry[1];
+    }
+    return null;
+}
+
+/// Spaces and tabs as single spaces, no spaces around line breaks, at most one empty line
+/// in a row, none at the start or the end
+pub fn tidyText(allocator: std.mem.Allocator, text: []const u8) ![:0]const u8 {
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(allocator);
+    var pending_space = false;
+    var newlines: usize = 0;
+    for (text) |c| {
+        switch (c) {
+            ' ', '\t', '\r' => pending_space = true,
+            '\n' => {
+                newlines += 1;
+                pending_space = false;
+            },
+            else => {
+                if (out.items.len > 0) {
+                    if (newlines > 0) {
+                        try out.appendNTimes(allocator, '\n', @min(newlines, 2));
+                    } else if (pending_space) {
+                        try out.append(allocator, ' ');
+                    }
+                }
+                newlines = 0;
+                pending_space = false;
+                try out.append(allocator, c);
+            },
+        }
+    }
+    return allocator.dupeSentinel(u8, out.items, 0);
+}
+
+test "htmlToText keeps paragraphs and decodes entities" {
+    const text = try htmlToText(std.testing.allocator, "<div><p>Un  <em>roman</em>&nbsp;d&#233;sol&eacute;.</p>\n<p>Deux &amp; trois<br/>quatre</p></div>");
+    defer std.testing.allocator.free(text);
+    try std.testing.expectEqualStrings("Un roman\u{A0}désolé.\n\nDeux & trois\nquatre", text);
+}
+
+test "htmlToText leaves unknown entities and lone signs alone" {
+    const text = try htmlToText(std.testing.allocator, "A & B &unknown; 3 < 4");
+    defer std.testing.allocator.free(text);
+    try std.testing.expectEqualStrings("A & B &unknown; 3", text);
+}
