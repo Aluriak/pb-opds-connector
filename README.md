@@ -97,7 +97,8 @@ For a server with "Allow full sync" set to "Yes", every list of books starts wit
 
 * Books are recognized by the id the catalog gives them, not by title or author, so a book renamed in the catalog is not downloaded again. Calibre and Calibre-Web give every book such an id.
 * They are saved in the Downloads folder as `<author> - <title>.<tag>.epub`, e.g. `Jean Hegland - Le Temps d'après.3f2a9c41b07de815.epub`. The tag comes from the book's id and is how the sync finds the book again, so leave it in the name. When a title or author changes in the catalog, the next sync renames the file. Books you download by hand from such a server get the same kind of name, so a sync does not fetch them a second time.
-* Books that were on the reader before under another name, for example copied over USB, are not recognized and get downloaded again.
+* Books already in the Downloads folder under another name, for example copied over USB, are taken over instead of downloaded again: a file with the format and the exact size the catalog gives, and the title in its name, is renamed like a synchronized book. Calibre-Web gives the size of each file; a catalog that does not cannot be matched this way.
+* At the end, the sync looks for files in the Downloads folder that are exact copies, byte for byte, of a synchronized book, and offers to delete them. The synchronized book stays, and so does your reading progress: the reader recognizes a book by its content.
 * Nothing is ever deleted or replaced. A book removed from the list stays on the reader, and a book whose file changed in the catalog is not downloaded again.
 * The sync runs while the app is open. If it is cut short, open "Synchronize" again: what is already on the reader is skipped.
 
