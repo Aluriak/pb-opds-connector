@@ -201,9 +201,17 @@ fn listHandler(action: c_int, x: c_int, y: c_int, idx: c_int, state: c_int) call
     return 1;
 }
 
+/// Inside a catalog the header names it, the start screen shows the name of the app
+fn listTitle() [*:0]const u8 {
+    if (feeds.items.len > 1) {
+        if (net.currentServer()) |server| return server.name.ptr;
+    }
+    return app_title;
+}
+
 fn showList() void {
     const feed = &feeds.items[feeds.items.len - 1];
-    pb.OpenList(app_title, null, pb.ScreenWidth(), item_height, @intCast(feed.entries.len), feed.pos, listHandler);
+    pb.OpenList(listTitle(), null, pb.ScreenWidth(), item_height, @intCast(feed.entries.len), feed.pos, listHandler);
 }
 
 /// Puts the start screen together again after servers were loaded, added or deleted
@@ -387,7 +395,7 @@ fn loadMoreTimer() callconv(.c) void {
         pocketbook.showError("Could not load more entries", err);
         return;
     };
-    pb.OpenList(app_title, null, pb.ScreenWidth(), item_height, @intCast(feed.entries.len), feed.top, listHandler);
+    pb.OpenList(listTitle(), null, pb.ScreenWidth(), item_height, @intCast(feed.entries.len), feed.top, listHandler);
 }
 
 pub fn main() void {
