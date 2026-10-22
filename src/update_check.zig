@@ -16,13 +16,13 @@ pub const Channel = enum {
 pub const Policy = enum {
     /// Releases and nightly builds
     all,
-    /// Releases only
+    /// Releases only, the default: nightly builds are for those who know why they want them
     stable,
     /// The update row is not shown at all
     off,
 
     pub fn parse(text: []const u8) Policy {
-        return std.meta.stringToEnum(Policy, std.mem.trim(u8, text, " \t\r\n")) orelse .all;
+        return std.meta.stringToEnum(Policy, std.mem.trim(u8, text, " \t\r\n")) orelse .stable;
     }
 };
 
@@ -132,10 +132,11 @@ test "describe names version, kind, commit and date" {
     try std.testing.expectEqualStrings("0.4.0 (release, 9606907, 2026-10-17)", info.describe(&buf));
 }
 
-test "Policy falls back to all for anything it does not know" {
+test "Policy falls back to stable for anything it does not know" {
     try std.testing.expectEqual(Policy.stable, Policy.parse(" stable\n"));
     try std.testing.expectEqual(Policy.off, Policy.parse("off"));
-    try std.testing.expectEqual(Policy.all, Policy.parse("whatever"));
+    try std.testing.expectEqual(Policy.stable, Policy.parse("whatever"));
+    try std.testing.expectEqual(Policy.all, Policy.parse("all"));
 }
 
 const test_installed: Info = .{ .channel = .nightly, .version = "0.3.1", .commit = "aaaaaaa1111", .tag = "nightly" };

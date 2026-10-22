@@ -160,11 +160,14 @@ Choose what is offered with a line in [the configuration file](#configuration-fi
 
 | Line | Effect |
 |---|---|
-| `updates=all` | Releases and nightly builds. This is the default. |
-| `updates=stable` | Releases only. |
+| `updates=stable` | Releases only. This is the default. |
+| `updates=all` | Releases and nightly builds, which are made from every change and less tested. |
 | `updates=off` | No "Check for updates" row. |
 
 If an update does not start, copy the app onto the reader by hand again, as when installing it.
+
+**Versions of the fork** continue from 0.3.1, the version of the original it started from:
+0.3.2, 0.3.3… They have nothing to do with the versions of the original (0.4.0, 0.5.0…).
 
 **Publishing a release** (for maintainers): set the new version in `build.zig.zon`, push it to `main`, then push a tag `v<version>`, e.g. `git tag v0.4.0 && git push origin v0.4.0`. The build workflow publishes it.
 

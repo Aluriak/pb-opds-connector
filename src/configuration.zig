@@ -20,9 +20,9 @@ fn key(buf: *[32]u8, index: usize, field: Field) [*:0]const u8 {
 
 /// Which updates may be offered: "updates=all" (default), "stable" or "off"
 pub fn updatePolicy() Policy {
-    const config = pb.OpenConfig(config_path, null) orelse return .all;
+    const config = pb.OpenConfig(config_path, null) orelse return .stable;
     defer pb.CloseConfigNoSave(config);
-    return Policy.parse(std.mem.span(pb.ReadString(config, "updates", "all")));
+    return Policy.parse(std.mem.span(pb.ReadString(config, "updates", "stable")));
 }
 
 /// Load the configuration. On the first start the default catalogs are put in
