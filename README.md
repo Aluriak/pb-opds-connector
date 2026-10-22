@@ -185,7 +185,7 @@ The app shows why a request failed: the HTTP status the server answered with, or
 1. Download `opds-connector-<platform>-debug.zip` from the [nightly release](https://github.com/Aluriak/pb-opds-connector/releases/tag/nightly), or build it yourself with `zig build -Dplatform=<platform>`.
 2. Copy `OPDS Connector.bin` and `opds-debug.app` into the `applications` folder of the reader.
 3. Open "opds-debug" from the applications list instead of "OPDS Connector".
-4. The log is written to `opds-log.txt` at the top of the reader's storage.
+4. The log is written to `opds-log.txt` in the `system` folder of the reader (out of the library, which takes text files for books).
 
 The log shows every request in detail, including the login header. That header holds the password in a readable form, so remove it before you share a log.
 
