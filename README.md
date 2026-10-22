@@ -1,4 +1,28 @@
-# PocketBook OPDS Connector
+# PocketBook OPDS Connector (fork)
+
+> **This is a personal fork. The original project is
+> [codedge/pb-opds-connector](https://codeberg.org/codedge/pb-opds-connector) on Codeberg, by
+> codedge, who wrote the app and keeps developing it. Use it unless you need something below.**
+>
+> This fork exists to try out features for my own reader before they reach the original, if they
+> ever do. Its changes were written with the help of an AI assistant (Claude); the original
+> project does not take AI-written code, so they are not sent there as pull requests. Bugs found
+> here are reported to the original as issues, without code.
+>
+> What the fork adds, on top of an older version of the original:
+>
+> * Synchronizing a whole list (e.g. a Calibre-Web shelf) to the reader, see [Synchronization](#synchronization)
+> * Per-server settings: sending the login right away (Calibre-Web), connection timeout
+> * The default catalogs stored in the settings file, editable and removable
+> * Error messages that say why a request failed
+> * The name of the catalog in the header
+> * Self-updates from the [nightly release](https://github.com/Aluriak/pb-opds-connector/releases/tag/nightly), see [Updates](#updates)
+>
+> It misses what the original added since, among others mobi, azw3 and txt downloads and the
+> HTTP/1.1 setting for catalogs behind bot protection.
+>
+> Bugs of the fork belong here, not to the original. All credit for the app goes to codedge;
+> the [licence](LICENCE.md) is the original MIT licence.
 
 An OPDS connector for PocketBook e-readers. Browse catalogs and download books straight to the device.
 
@@ -21,8 +45,9 @@ An OPDS connector for PocketBook e-readers. Browse catalogs and download books s
 ## Usage
 
 1. Check the compatibility table below to find the platform of your device.
-2. Download the matching archive from the [releases page](https://codeberg.org/codedge/pb-opds-connector/releases):
-   `opds-connector-<version>-<platform>.zip`. Make sure you get the correct platform.
+2. Download the matching archive of this fork from the [nightly release](https://github.com/Aluriak/pb-opds-connector/releases/tag/nightly):
+   `opds-connector-<platform>.zip`. Make sure you get the correct platform.
+   For the original app, see its [releases page](https://codeberg.org/codedge/pb-opds-connector/releases).
 3. Unzip it and copy `OPDS Connector.app` into the `applications` folder of your reader.
 4. Open "OPDS Connector" from the applications list on the reader.
 
