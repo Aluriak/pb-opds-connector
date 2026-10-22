@@ -2,20 +2,37 @@ const std = @import("std");
 const pb = @import("c");
 
 const Server = @import("server.zig").Server;
+const Catalogs = @import("server.zig").Catalogs;
 const Field = enum { name, url, user, password, use_http_11 };
 
 /// PocketBooks location for storing configuration of applications.
 pub const config_path = "/mnt/ext1/system/config/opds-connector.cfg";
+
+/// Set once the default catalogs were written into the configuration.
+/// Without it they are added again, so deleting them all must not remove it.
+const defaults_key = "defaults_added";
 
 /// Settings are stored as "server.<index>.<field>"
 fn key(buf: *[32]u8, index: usize, field: Field) [*:0]const u8 {
     return (std.fmt.bufPrintSentinel(buf, "server.{d}.{s}", .{ index, @tagName(field) }, 0) catch unreachable).ptr;
 }
 
-/// Load the configuration
+/// Load the configuration. On the first start the default catalogs are put in
+/// front of the servers found and written into it.
 pub fn load(allocator: std.mem.Allocator, servers: *std.ArrayList(Server)) !void {
-    const config = pb.OpenConfig(config_path, null) orelse return;
+    if (try read(allocator, servers)) store(servers.items);
+}
+
+/// Reads the servers, returns whether this is the first start
+fn read(allocator: std.mem.Allocator, servers: *std.ArrayList(Server)) !bool {
+    const config = pb.OpenConfig(config_path, null) orelse {
+        try addDefaults(allocator, servers);
+        return true;
+    };
     defer pb.CloseConfigNoSave(config);
+
+    const first_start = pb.ReadInt(config, defaults_key, 0) == 0;
+    if (first_start) try addDefaults(allocator, servers);
 
     var i: usize = 0;
     while (true) : (i += 1) {
@@ -35,6 +52,15 @@ pub fn load(allocator: std.mem.Allocator, servers: *std.ArrayList(Server)) !void
             error.InvalidAddress => continue,
             else => return err,
         };
+        errdefer server.free(allocator);
+        try servers.append(allocator, server);
+    }
+    return first_start;
+}
+
+fn addDefaults(allocator: std.mem.Allocator, servers: *std.ArrayList(Server)) !void {
+    for (Catalogs.defaults) |default| {
+        const server = try Server.init(allocator, default.name, default.url, "", "", false);
         errdefer server.free(allocator);
         try servers.append(allocator, server);
     }
@@ -60,6 +86,7 @@ pub fn store(servers: []const Server) void {
     inline for (std.meta.tags(Field)) |field| {
         pb.DeleteString(config, key(&buf, servers.len, field));
     }
+    pb.WriteInt(config, defaults_key, 1);
 
     _ = pb.SaveConfig(config);
 }

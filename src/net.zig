@@ -9,7 +9,7 @@ const ec_curves = "X25519:P-256";
 const user_agent = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36";
 const accept = "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8";
 
-/// The custom server the user is browsing, null for the built-in catalogs
+/// The server the user is browsing
 var server: ?Server = null;
 
 /// Called while a download runs, with the bytes received so far and the total

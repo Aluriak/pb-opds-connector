@@ -5,23 +5,14 @@ const HostName = std.Io.net.HostName;
 pub const Catalogs = struct {
     servers: std.ArrayList(Server) = .empty,
 
-    const internals = [_]Server{
-        .{ .name = "Flibusta", .url = "http://flibusta.is/opds", .internal = true },
-        .{ .name = "Standard Ebooks (new releases)", .url = "https://standardebooks.org/feeds/atom/new-releases", .internal = true },
-        .{ .name = "ManyBooks", .url = "https://manybooks.net/opds/index.php", .internal = true },
-        .{ .name = "Project Gutenberg", .url = "https://www.gutenberg.org/ebooks.opds/", .internal = true },
+    /// Written into the configuration on the first start. From then on they are
+    /// ordinary entries the user can edit or delete.
+    pub const defaults = [_]struct { name: []const u8, url: []const u8 }{
+        .{ .name = "Flibusta", .url = "http://flibusta.is/opds" },
+        .{ .name = "Standard Ebooks (new releases)", .url = "https://standardebooks.org/feeds/atom/new-releases" },
+        .{ .name = "ManyBooks", .url = "https://manybooks.net/opds/index.php" },
+        .{ .name = "Project Gutenberg", .url = "https://www.gutenberg.org/ebooks.opds/" },
     };
-
-    pub fn init(allocator: std.mem.Allocator) !Catalogs {
-        var catalogs: Catalogs = .{};
-        try catalogs.servers.appendSlice(allocator, &internals);
-        return catalogs;
-    }
-
-    /// The servers the user added. Only these are stored
-    pub fn custom(catalogs: Catalogs) []Server {
-        return catalogs.servers.items[internals.len..];
-    }
 };
 
 pub const Server = struct {
@@ -29,7 +20,6 @@ pub const Server = struct {
     url: [:0]const u8,
     user: [:0]const u8 = "",
     password: [:0]const u8 = "",
-    internal: bool = false,
     use_http_11: bool = false,
 
     /// Creates a server from what the user entered. This is the only place the address of a
@@ -126,6 +116,10 @@ test "init keeps a path the user typed" {
     try expectUrl("http://calibre.lan:8080/opds", "calibre.lan:8080/opds");
     try expectUrl("https://example.org/calibre/opds/", "https://example.org/calibre/opds/");
     try expectUrl("http://example.org/feed.xml", "example.org/feed.xml");
+}
+
+test "init leaves the default catalogs unchanged" {
+    for (Catalogs.defaults) |default| try expectUrl(default.url, default.url);
 }
 
 test "init leaves an address it produced itself unchanged" {
