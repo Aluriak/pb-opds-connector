@@ -2,6 +2,8 @@ const std = @import("std");
 const pb = @import("c");
 
 const pocketbook = @import("pocketbook.zig");
+const i18n = @import("i18n.zig");
+const t = i18n.t;
 const configuration = @import("configuration.zig");
 const Server = @import("server.zig").Server;
 
@@ -15,20 +17,21 @@ pub const DoneFn = *const fn (entered: anyerror!?Server) void;
 var on_done: DoneFn = undefined;
 
 const ServerField = struct {
+    /// Set when the form opens, in the language of the app
     label: [:0]const u8 = "",
     value: [:0]const u8 = "",
     kind: c_int = pb.CFG_TEXT,
 };
 const ServerFields = struct {
-    name: ServerField = .{ .label = "Name" },
-    url: ServerField = .{ .label = "URL" },
-    user: ServerField = .{ .label = "User name (optional)" },
+    name: ServerField = .{},
+    url: ServerField = .{},
+    user: ServerField = .{},
     // InkView keeps password fields encrypted in the settings file
-    password: ServerField = .{ .label = "Password (optional)", .kind = pb.CFG_PASSWORD },
+    password: ServerField = .{ .kind = pb.CFG_PASSWORD },
     // The index of the chosen answer, "0" or "1"
-    calibre_web: ServerField = .{ .label = "Calibre-Web (send the login right away)", .value = "0", .kind = pb.CFG_INDEX },
-    timeout: ServerField = .{ .label = "Connection timeout in seconds (optional)" },
-    sync: ServerField = .{ .label = "Allow full sync", .value = "0", .kind = pb.CFG_INDEX },
+    calibre_web: ServerField = .{ .value = "0", .kind = pb.CFG_INDEX },
+    timeout: ServerField = .{},
+    sync: ServerField = .{ .value = "0", .kind = pb.CFG_INDEX },
 
     const names = @typeInfo(ServerFields).@"struct".field_names;
 
@@ -113,10 +116,22 @@ var no_yes = [_:null]?[*:0]const u8{ "No", "Yes" };
 
 var form_rows = ServerFields.getFormRows();
 
+/// Puts the labels of the form in the language of the app
+fn translateForm() void {
+    const labels = [_][:0]const u8{
+        t(.field_name),        t(.field_url),     t(.field_user), t(.field_password),
+        t(.field_calibre_web), t(.field_timeout), t(.field_sync),
+    };
+    comptime std.debug.assert(labels.len == ServerFields.names.len);
+    for (labels, 0..) |label, i| form_rows[i].text = @constCast(label.ptr);
+    no_yes[0] = t(.no);
+    no_yes[1] = t(.yes);
+}
+
 /// Shows the "Add server" form
 pub fn open(gpa: std.mem.Allocator, server: ?Server, done: DoneFn) void {
     const cfg = pb.OpenConfig(configuration.config_path, null) orelse {
-        pocketbook.showError("Could not open the form", error.NoSettingsFile);
+        pocketbook.showError(t(.form_error), error.NoSettingsFile);
         return;
     };
     const fields: ServerFields = if (server) |s| .fromServer(s) else .{};
@@ -126,7 +141,8 @@ pub fn open(gpa: std.mem.Allocator, server: ?Server, done: DoneFn) void {
     allocator = gpa;
     on_done = done;
 
-    const title = if (server == null) "Add server" else "Edit server";
+    translateForm();
+    const title = if (server == null) t(.form_add) else t(.form_edit);
     pb.OpenConfigEditor(title, cfg, &form_rows, @ptrCast(&closed), changed);
 }
 

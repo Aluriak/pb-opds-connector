@@ -1,6 +1,7 @@
 //! Why a request failed, in words the user can act on.
 
 const std = @import("std");
+const i18n = @import("i18n.zig");
 
 /// What is known about the last failed request
 pub const Failure = struct {
@@ -12,16 +13,15 @@ pub const Failure = struct {
     curl_code: c_int = 0,
 
     pub fn describe(failure: Failure, buf: []u8) []const u8 {
-        const text = switch (failure.http_status) {
+        return switch (failure.http_status) {
             0 => if (failure.curl_text.len > 0)
-                std.fmt.bufPrint(buf, "{s}", .{failure.curl_text})
+                std.fmt.bufPrint(buf, "{s}", .{failure.curl_text}) catch buf
             else
-                std.fmt.bufPrint(buf, "curl error {d}", .{failure.curl_code}),
-            401, 403 => std.fmt.bufPrint(buf, "The server refused the login (HTTP {d}). Check the user name and password.", .{failure.http_status}),
-            404 => std.fmt.bufPrint(buf, "Nothing found at this address (HTTP 404). Check the URL.", .{}),
-            else => std.fmt.bufPrint(buf, "The server answered with an error (HTTP {d}).", .{failure.http_status}),
+                i18n.fmt(buf, .curl_error, .{failure.curl_code}),
+            401, 403 => i18n.fmt(buf, .login_refused, .{failure.http_status}),
+            404 => i18n.fmt(buf, .not_found, .{}),
+            else => i18n.fmt(buf, .http_error, .{failure.http_status}),
         };
-        return text catch buf;
     }
 };
 

@@ -1,5 +1,6 @@
 const std = @import("std");
 const pb = @import("c");
+const i18n = @import("i18n.zig");
 
 const Server = @import("server.zig").Server;
 const Catalogs = @import("server.zig").Catalogs;
@@ -23,6 +24,20 @@ pub fn updatePolicy() Policy {
     const config = pb.OpenConfig(config_path, null) orelse return .stable;
     defer pb.CloseConfigNoSave(config);
     return Policy.parse(std.mem.span(pb.ReadString(config, "updates", "stable")));
+}
+
+/// The language of the app: "language=auto" (default, the reader's), "fr" or "en"
+pub fn language() i18n.Choice {
+    const config = pb.OpenConfig(config_path, null) orelse return .auto;
+    defer pb.CloseConfigNoSave(config);
+    return i18n.Choice.parse(std.mem.span(pb.ReadString(config, "language", "auto")));
+}
+
+pub fn storeLanguage(choice: i18n.Choice) void {
+    const config = pb.OpenConfig(config_path, null) orelse return;
+    defer pb.CloseConfig(config);
+    pb.WriteString(config, "language", @tagName(choice));
+    _ = pb.SaveConfig(config);
 }
 
 /// Load the configuration. On the first start the default catalogs are put in

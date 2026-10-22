@@ -116,6 +116,12 @@ server.1.url=https://www.gutenberg.org/ebooks.opds/
 * The user name and password are stored unencrypted on the reader, in [the configuration file](#configuration-file). Anyone with access to the reader's storage can read them.
 * They are only sent to the server you entered, never to another server a catalog links to.
 
+### Language
+
+The app speaks English or French. By default it follows the reader's language; the last row of
+the start screen switches between the reader's language, French and English. The choice is kept
+in the configuration file as `language=auto`, `fr` or `en`.
+
 ## Synchronization
 
 For a server with "Allow full sync" set to "Yes", every list of books starts with a "Synchronize" row (after "Search", if there is one). Opening it loads the whole list, then downloads each book that is not on the reader yet, in EPUB if the catalog offers it. A summary tells how many were downloaded, already there or failed.

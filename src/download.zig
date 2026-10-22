@@ -6,10 +6,10 @@ const trace = pocketbook.trace;
 const utils = @import("utils.zig");
 const files = @import("files.zig");
 const xml = @import("xml.zig");
+const i18n = @import("i18n.zig");
+const t = i18n.t;
 
 const pb = @import("c");
-
-const app_title = @import("build_options").app_name;
 
 /// All downloads are stored into the "Downloads" folder.
 /// The PocketBook scanner is asked to only re-scan this folder after a download.
@@ -38,7 +38,7 @@ pub fn start(entry: xml.Entry) void {
 fn openMenu(entry: xml.Entry) void {
     menu_entry = entry;
 
-    menu_items[0] = .{ .type = pb.ITEM_HEADER, .index = 0, .text = @constCast("Download"), .submenu = null };
+    menu_items[0] = .{ .type = pb.ITEM_HEADER, .index = 0, .text = @constCast(t(.download).ptr), .submenu = null };
     for (entry.downloads, 0..) |download, i| {
         const text = download.description(&menu_texts[i]);
         menu_items[i + 1] = .{ .type = pb.ITEM_ACTIVE, .index = @intCast(i + 1), .text = @constCast(text.ptr), .submenu = null };
@@ -70,23 +70,23 @@ fn downloadBook(entry: xml.Entry, download: xml.Download) void {
     const filename = fileName(entry, download.format, &name_buf);
 
     if (!pocketbook.ensureNetwork()) {
-        pocketbook.showError("Could not download the book", error.NoNetwork);
+        pocketbook.showError(t(.download_error), error.NoNetwork);
         return;
     }
 
     progress_step = 0;
-    pb.OpenProgressbar(pb.ICON_INFORMATION, "Downloading", entry.title.ptr, 0, null);
+    pb.OpenProgressbar(pb.ICON_INFORMATION, t(.downloading), entry.title.ptr, 0, null);
     net.download(download.url, download_dir, filename, onProgress) catch |err| {
         pb.CloseProgressbar();
-        pocketbook.showError("Could not download the book", err);
+        pocketbook.showError(t(.download_error), err);
         return;
     };
     pb.CloseProgressbar();
     pocketbook.rescanLibrary(download_dir);
 
     var msg_buf: [256]u8 = undefined;
-    const msg = std.fmt.bufPrintSentinel(&msg_buf, "Saved to Downloads:\n{s}", .{entry.title}, 0) catch "Saved to Downloads.";
-    pb.Message(pb.ICON_INFORMATION, app_title, msg.ptr, 3000);
+    const msg = i18n.fmt(&msg_buf, .saved, .{entry.title});
+    pb.Message(pb.ICON_INFORMATION, t(.app_title), msg.ptr, 3000);
 }
 
 fn onProgress(downloaded: u64, total: u64) void {
@@ -119,7 +119,7 @@ const SyncResult = struct {
 /// Nothing on the reader is deleted or replaced.
 pub fn synchronize(entries: []const xml.Entry) void {
     if (!pocketbook.ensureNetwork()) {
-        pocketbook.showError("Could not synchronize", error.NoNetwork);
+        pocketbook.showError(t(.sync_error), error.NoNetwork);
         return;
     }
 
@@ -135,7 +135,7 @@ pub fn synchronize(entries: []const xml.Entry) void {
 
     var result: SyncResult = .{};
     var done: usize = 0;
-    pb.OpenProgressbar(pb.ICON_INFORMATION, "Synchronizing", "", 0, null);
+    pb.OpenProgressbar(pb.ICON_INFORMATION, t(.synchronizing), "", 0, null);
 
     for (entries) |entry| {
         if (entry.downloads.len == 0) continue;
@@ -173,21 +173,20 @@ pub fn synchronize(entries: []const xml.Entry) void {
     if (result.downloaded > 0 or result.renamed > 0 or result.adopted > 0) pocketbook.rescanLibrary(download_dir);
 
     var renamed_buf: [48]u8 = undefined;
-    const renamed = if (result.renamed > 0) std.fmt.bufPrint(&renamed_buf, " ({d} renamed)", .{result.renamed}) catch "" else "";
+    const renamed = if (result.renamed > 0) i18n.fmt(&renamed_buf, .sync_renamed, .{result.renamed}) else "";
     var adopted_buf: [80]u8 = undefined;
-    const adopted = if (result.adopted > 0) std.fmt.bufPrint(&adopted_buf, ", {d} found under another name", .{result.adopted}) catch "" else "";
-    const msg = std.fmt.bufPrintSentinel(
+    const adopted = if (result.adopted > 0) i18n.fmt(&adopted_buf, .sync_adopted, .{result.adopted}) else "";
+    const msg = i18n.fmt(
         &summary_text,
-        "Synchronized: {d} downloaded, {d} already on the reader{s}{s}, {d} failed{s}",
-        .{ result.downloaded, result.present, renamed, adopted, result.failed, if (result.skipped > 0) ", some books have no id and were left out." else "." },
-        0,
-    ) catch "Synchronized.";
+        .sync_done,
+        .{ result.downloaded, result.present, renamed, adopted, result.failed, if (result.skipped > 0) t(.sync_skipped) else "." },
+    );
 
     findCopies() catch |err| trace("looking for copies failed: {s}\n", .{@errorName(err)});
     if (copies.len > 0) {
         offerToDeleteCopies(msg);
     } else {
-        pb.Message(if (result.failed > 0) pb.ICON_WARNING else pb.ICON_INFORMATION, app_title, msg.ptr, 10000);
+        pb.Message(if (result.failed > 0) pb.ICON_WARNING else pb.ICON_INFORMATION, t(.app_title), msg.ptr, 10000);
     }
 }
 
@@ -279,22 +278,11 @@ fn offerToDeleteCopies(summary: []const u8) void {
         len += line.len;
     }
     const more = if (copies.len > 3) "\n- …" else "";
-    const text = std.fmt.bufPrintSentinel(
-        &dialog_text,
-        "{s}\n\n{d} {s} in Downloads {s} exact {s} of synchronized books:{s}{s}\n\nDelete the {s}? The synchronized books and your reading progress stay.",
-        .{
-            summary,
-            copies.len,
-            if (copies.len == 1) "file" else "files",
-            if (copies.len == 1) "is an" else "are",
-            if (copies.len == 1) "copy" else "copies",
-            names_buf[0..len],
-            more,
-            if (copies.len == 1) "copy" else "copies",
-        },
-        0,
-    ) catch return;
-    pb.Dialog(pb.ICON_QUESTION, app_title, text.ptr, "Delete", "Keep", copiesAnswered);
+    const text = if (copies.len == 1)
+        i18n.fmt(&dialog_text, .copy_found, .{ summary, names_buf[0..len], more })
+    else
+        i18n.fmt(&dialog_text, .copies_found, .{ summary, copies.len, names_buf[0..len], more });
+    pb.Dialog(pb.ICON_QUESTION, t(.app_title), text.ptr, t(.delete), t(.keep), copiesAnswered);
 }
 
 /// Called by InkView with the number of the button that was pressed
@@ -308,8 +296,8 @@ fn copiesAnswered(button: c_int) callconv(.c) void {
     pocketbook.rescanLibrary(download_dir);
 
     var buf: [64]u8 = undefined;
-    const msg = std.fmt.bufPrintSentinel(&buf, "Deleted {d} {s}.", .{ deleted, if (deleted == 1) "copy" else "copies" }, 0) catch "Deleted.";
-    pb.Message(pb.ICON_INFORMATION, app_title, msg.ptr, 3000);
+    const msg = i18n.fmt(&buf, .copies_deleted, .{deleted});
+    pb.Message(pb.ICON_INFORMATION, t(.app_title), msg.ptr, 3000);
 }
 
 /// EPUB if the catalog offers it, the first format otherwise

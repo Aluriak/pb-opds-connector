@@ -7,6 +7,8 @@ const update = @import("update.zig");
 const Policy = @import("update_check.zig").Policy;
 const search = @import("search.zig");
 const pocketbook = @import("pocketbook.zig");
+const i18n = @import("i18n.zig");
+const t = i18n.t;
 const trace = pocketbook.trace;
 
 const configuration = @import("configuration.zig");
@@ -15,7 +17,15 @@ const Catalogs = @import("server.zig").Catalogs;
 
 const pb = @import("c");
 
-const app_title = @import("build_options").app_name;
+/// The language the user chose, the reader's by default
+var language: i18n.Choice = .auto;
+
+extern "c" fn currentLang() ?[*:0]const u8;
+
+fn applyLanguage() void {
+    i18n.lang = language.resolve(std.mem.span(currentLang() orelse "en"));
+    _ = pb.SetSubtaskInfo(pb.GetCurrentTask(), 0, t(.app_title), null);
+}
 
 const Feed = struct {
     arena: std.heap.ArenaAllocator,
@@ -76,7 +86,8 @@ fn mainHandler(event_type: c_int, par1: c_int, par2: c_int) callconv(.c) c_int {
 
     switch (event_type) {
         pb.EVT_INIT => {
-            _ = pb.SetSubtaskInfo(pb.GetCurrentTask(), 0, app_title, null);
+            language = configuration.language();
+            applyLanguage();
 
             item_height = @divTrunc(pb.ScreenHeight(), 10);
             padding = @divTrunc(item_height, 8);
@@ -158,6 +169,14 @@ fn listHandler(action: c_int, x: c_int, y: c_int, idx: c_int, state: c_int) call
                     update.checkForUpdate(update_policy);
                     return 1;
                 }
+                if (entry.action == .language) {
+                    language = language.next();
+                    configuration.storeLanguage(language);
+                    applyLanguage();
+                    rebuildCatalogRows() catch return 1;
+                    showList();
+                    return 1;
+                }
                 // The row after the last catalog is "Add server"
                 if (idx == catalogs.servers.items.len) {
                     // Necessarry, as we otherwise would overwrite the previously entered data.
@@ -170,7 +189,7 @@ fn listHandler(action: c_int, x: c_int, y: c_int, idx: c_int, state: c_int) call
 
             if (entry.action == .search) {
                 search_text[0] = 0;
-                pb.OpenKeyboard("Search", &search_text, search_text.len - 1, pb.KBD_NORMAL, searchEntered);
+                pb.OpenKeyboard(t(.search), &search_text, search_text.len - 1, pb.KBD_NORMAL, searchEntered);
             } else if (entry.action == .sync) {
                 synchronize(feed);
                 showList();
@@ -180,7 +199,7 @@ fn listHandler(action: c_int, x: c_int, y: c_int, idx: c_int, state: c_int) call
                 // Pushes onto feeds, `feed` must not be used afterwards
                 openFeed(url);
             } else {
-                pb.Message(pb.ICON_INFORMATION, app_title, "Nothing to open for this entry.", 3000);
+                pb.Message(pb.ICON_INFORMATION, t(.app_title), t(.nothing_to_open), 3000);
             }
         },
         pb.LIST_MENU => {
@@ -222,21 +241,21 @@ fn listTitle() [*:0]const u8 {
     if (feeds.items.len > 1) {
         if (net.currentServer()) |server| return server.name.ptr;
     }
-    return app_title;
+    return t(.app_title);
 }
 
 /// Loads the rest of the list, then downloads its books that are not on the reader yet
 fn synchronize(feed: *Feed) void {
     if (feed.next_url != null) {
         if (!pocketbook.ensureNetwork()) {
-            pocketbook.showError("Could not synchronize", error.NoNetwork);
+            pocketbook.showError(t(.sync_error), error.NoNetwork);
             return;
         }
         pb.ShowHourglassForce();
         defer pb.HideHourglass();
         while (feed.next_url != null) {
             feed.loadMore() catch |err| {
-                pocketbook.showError("Could not load the whole list", err);
+                pocketbook.showError(t(.load_all_error), err);
                 return;
             };
         }
@@ -252,17 +271,24 @@ fn rebuildCatalogRows() !void {
 
     update_policy = if (update.enabled) configuration.updatePolicy() else .off;
     const allocator = start_screen.arena.allocator();
-    const extra_rows: usize = if (update_policy == .off) 1 else 2;
+    // "Add server", maybe "Check for updates", then the language
+    const extra_rows: usize = if (update_policy == .off) 2 else 3;
     const rows = try allocator.alloc(xml.Entry, catalogs.servers.items.len + extra_rows);
     for (catalogs.servers.items, 0..) |server, i| {
         rows[i] = .{ .title = server.name, .author = server.url, .nav_url = server.url };
     }
-    rows[catalogs.servers.items.len] = .{ .title = "+ Add server", .summary = "Calibre or another OPDS server" };
+    rows[catalogs.servers.items.len] = .{ .title = t(.add_server), .summary = t(.add_server_detail) };
     if (update_policy != .off) {
         var buf: [128]u8 = undefined;
         const installed = try allocator.dupeSentinel(u8, update.describeInstalled(&buf), 0);
-        rows[rows.len - 1] = .{ .action = .update, .title = "Check for updates", .summary = installed };
+        rows[rows.len - 2] = .{ .action = .update, .title = t(.check_updates), .summary = installed };
     }
+    const chosen = switch (language) {
+        .auto => t(.language_auto),
+        .fr => t(.language_fr),
+        .en => t(.language_en),
+    };
+    rows[rows.len - 1] = .{ .action = .language, .title = try i18n.alloc(allocator, .language, .{chosen}), .summary = t(.language_change) };
 
     start_screen.entries = rows;
     start_screen.pos = @min(start_screen.pos, @as(c_int, @intCast(rows.len - 1)));
@@ -273,8 +299,8 @@ fn openServerMenu() void {
     const server = catalogs.servers.items[server_index.?];
 
     server_menu[0] = .{ .type = pb.ITEM_HEADER, .index = 0, .text = @constCast(server.name.ptr), .submenu = null };
-    server_menu[1] = .{ .type = pb.ITEM_ACTIVE, .index = 1, .text = @constCast("Edit"), .submenu = null };
-    server_menu[2] = .{ .type = pb.ITEM_ACTIVE, .index = 2, .text = @constCast("Delete"), .submenu = null };
+    server_menu[1] = .{ .type = pb.ITEM_ACTIVE, .index = 1, .text = @constCast(t(.edit).ptr), .submenu = null };
+    server_menu[2] = .{ .type = pb.ITEM_ACTIVE, .index = 2, .text = @constCast(t(.delete).ptr), .submenu = null };
     // A zeroed item ends the menu
     server_menu[3] = .{ .type = 0, .index = 0, .text = null, .submenu = null };
 
@@ -287,7 +313,7 @@ fn serverMenuHandler(index: c_int) callconv(.c) void {
 
     switch (index) {
         1 => server_form.open(gpa, catalogs.servers.items[selected], serverEntered),
-        2 => pb.Dialog(pb.ICON_QUESTION, app_title, "Delete this server?", "Delete", "Cancel", deleteAnswered),
+        2 => pb.Dialog(pb.ICON_QUESTION, t(.app_title), t(.delete_server), t(.delete), t(.cancel), deleteAnswered),
         // Anything else means the menu was closed without a choice
         else => {},
     }
@@ -295,7 +321,7 @@ fn serverMenuHandler(index: c_int) callconv(.c) void {
 
 /// Called when the "Add server" form was left
 fn serverEntered(server: anyerror!?Server) void {
-    saveServer(server) catch |err| pocketbook.showError("Could not save the server", err);
+    saveServer(server) catch |err| pocketbook.showError(t(.save_server_error), err);
     showList();
 }
 
@@ -335,7 +361,7 @@ fn openFeed(url: [:0]const u8) void {
 
     loadFeed(url) catch |err| {
         trace("loadFeed failed: {s}\n", .{@errorName(err)});
-        pocketbook.showError("Could not open the catalog", err);
+        pocketbook.showError(t(.open_catalog_error), err);
         return;
     };
 
@@ -364,8 +390,8 @@ fn loadFeed(url: [:0]const u8) !void {
 
     // A catalog that can be searched gets the "Search" row in front, a list of books of a
     // catalog that may be synchronized the "Synchronize" row
-    const search_row: xml.Entry = .{ .action = .search, .title = "Search", .summary = "Search this catalog" };
-    const sync_row: xml.Entry = .{ .action = .sync, .title = "Synchronize", .summary = "Download all books of this list that are not on the reader yet" };
+    const search_row: xml.Entry = .{ .action = .search, .title = t(.search), .summary = t(.search_detail) };
+    const sync_row: xml.Entry = .{ .action = .sync, .title = t(.sync), .summary = t(.sync_detail) };
     const has_books = for (parsed.entries) |entry| {
         if (entry.downloads.len > 0) break true;
     } else false;
@@ -392,8 +418,8 @@ fn searchEntered(typed: [*c]u8) callconv(.c) void {
 
     if (text.len > 0) {
         loadSearch(text) catch |err| switch (err) {
-            error.EmptyFeed => pb.Message(pb.ICON_INFORMATION, app_title, "Nothing found.", 3000),
-            else => pocketbook.showError("Could not search the catalog", err),
+            error.EmptyFeed => pb.Message(pb.ICON_INFORMATION, t(.app_title), t(.nothing_found), 3000),
+            else => pocketbook.showError(t(.search_error), err),
         };
     }
     showList();
@@ -442,7 +468,7 @@ fn loadMoreTimer() callconv(.c) void {
         trace("loadMore failed: {s}\n", .{@errorName(err)});
         // Do not try again on every repaint
         feed.next_url = null;
-        pocketbook.showError("Could not load more entries", err);
+        pocketbook.showError(t(.load_more_error), err);
         return;
     };
     pb.OpenList(listTitle(), null, pb.ScreenWidth(), item_height, @intCast(feed.entries.len), feed.top, listHandler);

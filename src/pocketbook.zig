@@ -4,7 +4,7 @@ const pb = @import("c");
 
 const net = @import("net.zig");
 
-const app_title = @import("build_options").app_name;
+const i18n = @import("i18n.zig");
 
 pub fn ensureNetwork() bool {
     if (pb.QueryNetwork() & pb.NET_CONNECTED != 0) return true;
@@ -44,5 +44,5 @@ pub fn showError(text: []const u8, err: anyerror) void {
     var buf: [384]u8 = undefined;
     const msg = std.fmt.bufPrintSentinel(&buf, "{s}:\n{s}", .{ text, reason }, 0) catch "Error";
     trace("error: {s}\n", .{msg});
-    pb.Message(pb.ICON_ERROR, app_title, msg.ptr, 10000);
+    pb.Message(pb.ICON_ERROR, i18n.t(.app_title), msg.ptr, 10000);
 }
