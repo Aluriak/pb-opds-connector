@@ -30,6 +30,8 @@ fn applyLanguage() void {
 const Feed = struct {
     arena: std.heap.ArenaAllocator,
     entries: []const xml.Entry,
+    /// Where the list was loaded from, empty for the start screen
+    url: [:0]const u8 = "",
     /// Selected item, restored when coming back from a sub feed
     pos: c_int = 0,
     /// Where the catalog continues this list, null once everything is loaded
@@ -191,8 +193,8 @@ fn listHandler(action: c_int, x: c_int, y: c_int, idx: c_int, state: c_int) call
                 search_text[0] = 0;
                 pb.OpenKeyboard(t(.search), &search_text, search_text.len - 1, pb.KBD_NORMAL, searchEntered);
             } else if (entry.action == .sync) {
+                // Shows the list again once the books are downloaded
                 synchronize(feed);
-                showList();
             } else if (entry.downloads.len > 0) {
                 download.start(entry);
             } else if (entry.nav_url) |url| {
@@ -249,18 +251,19 @@ fn synchronize(feed: *Feed) void {
     if (feed.next_url != null) {
         if (!pocketbook.ensureNetwork()) {
             pocketbook.showError(t(.sync_error), error.NoNetwork);
-            return;
+            return showList();
         }
         pb.ShowHourglassForce();
-        defer pb.HideHourglass();
         while (feed.next_url != null) {
             feed.loadMore() catch |err| {
+                pb.HideHourglass();
                 pocketbook.showError(t(.load_all_error), err);
-                return;
+                return showList();
             };
         }
+        pb.HideHourglass();
     }
-    download.synchronize(feed.entries);
+    download.synchronize(feed.entries, feed.url, showList);
 }
 
 /// Puts the start screen together again after servers were loaded, added or deleted
@@ -407,7 +410,8 @@ fn loadFeed(url: [:0]const u8) !void {
         &.{};
     const entries = try std.mem.concat(arena.allocator(), xml.Entry, &.{ rows, parsed.entries });
 
-    try feeds.append(gpa, .{ .arena = arena, .entries = entries, .next_url = parsed.next_url, .search = parsed.search });
+    const own_url = try arena.allocator().dupeSentinel(u8, url, 0);
+    try feeds.append(gpa, .{ .arena = arena, .entries = entries, .url = own_url, .next_url = parsed.next_url, .search = parsed.search });
 }
 
 /// Called by InkView when the keyboard of the search was closed, without a text if it was cancelled

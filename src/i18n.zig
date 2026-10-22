@@ -70,7 +70,17 @@ const texts = .{
     .downloading = .{ "Downloading", "Téléchargement" },
     .saved = .{ "Saved to Downloads:\n{s}", "Enregistré dans Downloads :\n{s}" },
     .synchronizing = .{ "Synchronizing", "Synchronisation" },
-    .sync_done = .{ "Synchronized: {d} downloaded, {d} already on the reader{s}{s}, {d} failed{s}", "Synchronisé : {d} téléchargé(s), {d} déjà sur la liseuse{s}{s}, {d} en échec{s}" },
+    .sync_done = .{ "{s}Synchronized: {d} downloaded, {d} already on the reader{s}{s}, {d} failed{s}", "{s}Synchronisé : {d} téléchargé(s), {d} déjà sur la liseuse{s}{s}, {d} en échec{s}" },
+    .sync_stopped = .{ "Stopped before the end. ", "Arrêtée avant la fin. " },
+    .removed_found = .{
+        "{s}\n\nA synchronized book left this list:{s}{s}\n\nDelete it from the reader?",
+        "{s}\n\nUn livre synchronisé n'est plus dans cette liste :{s}{s}\n\nLe supprimer de la liseuse ?",
+    },
+    .removed_found_many = .{
+        "{s}\n\n{d} synchronized books left this list:{s}{s}\n\nDelete them from the reader?",
+        "{s}\n\n{d} livres synchronisés ne sont plus dans cette liste :{s}{s}\n\nLes supprimer de la liseuse ?",
+    },
+    .removed_deleted = .{ "Books deleted: {d}.", "Livres supprimés : {d}." },
     .sync_renamed = .{ " ({d} renamed)", " ({d} renommé(s))" },
     .sync_adopted = .{ ", {d} found under another name", ", {d} trouvé(s) sous un autre nom" },
     .sync_skipped = .{ ", some books have no id and were left out.", ", des livres sans identifiant ont été laissés de côté." },

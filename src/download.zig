@@ -6,6 +6,7 @@ const trace = pocketbook.trace;
 const utils = @import("utils.zig");
 const files = @import("files.zig");
 const xml = @import("xml.zig");
+const manifest = @import("manifest.zig");
 const i18n = @import("i18n.zig");
 const t = i18n.t;
 
@@ -115,82 +116,233 @@ const SyncResult = struct {
     skipped: usize = 0,
 };
 
-/// Downloads every book of `entries` that is not on the reader yet, one after the other.
-/// Nothing on the reader is deleted or replaced.
-pub fn synchronize(entries: []const xml.Entry) void {
+/// A synchronization going on. It runs one book per timer call, so the reader handles the
+/// stop button of the progress bar between two books.
+const Sync = struct {
+    arena: std.heap.ArenaAllocator,
+    entries: []const xml.Entry,
+    /// The key of the list in the manifest
+    list: manifest.Tag,
+    /// The next entry to look at
+    next: usize = 0,
+    /// Books of the list, and books looked at so far
+    books: usize = 0,
+    done: usize = 0,
+    /// The files that are not from a sync, candidates for books already on the reader
+    untagged: [][]const u8 = &.{},
+    result: SyncResult = .{},
+    stopped: bool = false,
+    on_done: *const fn () void,
+};
+
+var sync: ?Sync = null;
+
+/// Downloads every book of `entries`, the list at `list_url`, that is not on the reader yet,
+/// one after the other. Then offers to delete exact copies of the books, and the books that
+/// left the list since the last synchronization. `on_done` is called once the downloads are
+/// over, before the questions; until then `entries` must stay.
+pub fn synchronize(entries: []const xml.Entry, list_url: []const u8, on_done: *const fn () void) void {
+    if (sync != null) return;
     if (!pocketbook.ensureNetwork()) {
         pocketbook.showError(t(.sync_error), error.NoNetwork);
-        return;
+        return on_done();
     }
 
-    var books: usize = 0;
+    var state: Sync = .{ .arena = .init(std.heap.c_allocator), .entries = entries, .list = manifest.listKey(list_url), .on_done = on_done };
     for (entries) |entry| {
-        if (entry.downloads.len > 0) books += 1;
+        if (entry.downloads.len > 0) state.books += 1;
     }
+    state.untagged = untaggedFiles(state.arena.allocator()) catch &.{};
+    sync = state;
 
-    var arena: std.heap.ArenaAllocator = .init(std.heap.c_allocator);
-    defer arena.deinit();
-    // The files that are not from a sync, candidates for books already on the reader
-    var untagged: [][]const u8 = untaggedFiles(arena.allocator()) catch &.{};
+    // With a handler, the progress bar has a button to stop
+    pb.OpenProgressbar(pb.ICON_INFORMATION, t(.synchronizing), "", 0, syncStopped);
+    pb.SetHardTimer("opds-sync", @ptrCast(&syncStep), 0);
+}
 
-    var result: SyncResult = .{};
-    var done: usize = 0;
-    pb.OpenProgressbar(pb.ICON_INFORMATION, t(.synchronizing), "", 0, null);
+/// Called by InkView when the button of the progress bar is pressed
+fn syncStopped(button: c_int) callconv(.c) void {
+    trace("sync stop button={d}\n", .{button});
+    if (sync) |*state| state.stopped = true;
+}
 
-    for (entries) |entry| {
+/// Looks at the next entries, until one book was downloaded, then lets the reader breathe
+fn syncStep() callconv(.c) void {
+    if (sync == null) return;
+    const state = &sync.?;
+    while (state.next < state.entries.len and !state.stopped) {
+        const entry = state.entries[state.next];
+        state.next += 1;
         if (entry.downloads.len == 0) continue;
-        done += 1;
+        state.done += 1;
 
         if (entry.id.len == 0) {
-            result.skipped += 1;
+            state.result.skipped += 1;
             continue;
         }
         if (findPresent(entry)) |present| {
-            result.present += 1;
-            if (present.renamed) result.renamed += 1;
+            state.result.present += 1;
+            if (present.renamed) state.result.renamed += 1;
             continue;
         }
 
         const download = preferred(entry.downloads);
-        if (adopt(entry, download, &untagged)) {
-            result.adopted += 1;
+        if (adopt(entry, download, &state.untagged)) {
+            state.result.adopted += 1;
             continue;
         }
 
         var text_buf: [192]u8 = undefined;
-        const text = std.fmt.bufPrintSentinel(&text_buf, "{d}/{d}: {s}", .{ done, books, entry.title }, 0) catch "";
-        _ = pb.UpdateProgressbar(text.ptr, @intCast(done * 100 / books));
+        const text = std.fmt.bufPrintSentinel(&text_buf, "{d}/{d}: {s}", .{ state.done, state.books, entry.title }, 0) catch "";
+        const answer = pb.UpdateProgressbar(text.ptr, @intCast(state.done * 100 / state.books));
+        trace("progress bar answer={d}\n", .{answer});
 
         syncBook(entry, download) catch |err| {
             trace("sync of {s} failed: {s}\n", .{ entry.id, @errorName(err) });
-            result.failed += 1;
+            state.result.failed += 1;
             continue;
         };
-        result.downloaded += 1;
+        state.result.downloaded += 1;
+        // The next book after the reader had a chance to handle the stop button
+        pb.SetHardTimer("opds-sync", @ptrCast(&syncStep), 10);
+        return;
     }
+    finishSync();
+}
 
+fn finishSync() void {
+    if (sync == null) return;
+    const state = &sync.?;
+    defer {
+        state.arena.deinit();
+        sync = null;
+    }
     pb.CloseProgressbar();
+    const result = state.result;
     if (result.downloaded > 0 or result.renamed > 0 or result.adopted > 0) pocketbook.rescanLibrary(download_dir);
+    state.on_done();
 
     var renamed_buf: [48]u8 = undefined;
     const renamed = if (result.renamed > 0) i18n.fmt(&renamed_buf, .sync_renamed, .{result.renamed}) else "";
     var adopted_buf: [80]u8 = undefined;
     const adopted = if (result.adopted > 0) i18n.fmt(&adopted_buf, .sync_adopted, .{result.adopted}) else "";
-    const msg = i18n.fmt(
+    const summary = i18n.fmt(
         &summary_text,
         .sync_done,
-        .{ result.downloaded, result.present, renamed, adopted, result.failed, if (result.skipped > 0) t(.sync_skipped) else "." },
+        .{
+            if (state.stopped) t(.sync_stopped) else "",
+            result.downloaded,
+            result.present,
+            renamed,
+            adopted,
+            result.failed,
+            if (result.skipped > 0) t(.sync_skipped) else ".",
+        },
     );
 
     findCopies() catch |err| trace("looking for copies failed: {s}\n", .{@errorName(err)});
-    if (copies.len > 0) {
-        offerToDeleteCopies(msg);
-    } else {
-        pb.Message(if (result.failed > 0) pb.ICON_WARNING else pb.ICON_INFORMATION, t(.app_title), msg.ptr, 10000);
+    findRemoved(state) catch |err| trace("looking for removed books failed: {s}\n", .{@errorName(err)});
+    pending_summary = summary;
+    if (copies.len == 0 and removed.len == 0) {
+        pb.Message(if (result.failed > 0) pb.ICON_WARNING else pb.ICON_INFORMATION, t(.app_title), summary.ptr, 10000);
+        pending_summary = null;
+        return;
     }
+    askNext();
 }
 
 var summary_text: [320]u8 = undefined;
+/// The summary of the synchronization, shown with the first question
+var pending_summary: ?[:0]const u8 = null;
+
+/// Books synchronized from the list before that left it, kept while the user is asked
+/// whether to delete them
+var removed_arena: std.heap.ArenaAllocator = .init(std.heap.c_allocator);
+var removed: []const [:0]const u8 = &.{};
+
+/// Finds the books that left the list, and writes down the books of the list now. A stopped
+/// synchronization saw only part of the list: it adds the books it saw, removes nothing.
+fn findRemoved(state: *const Sync) !void {
+    _ = removed_arena.reset(.retain_capacity);
+    removed = &.{};
+    const allocator = removed_arena.allocator();
+
+    const lines = try manifest.load(allocator, manifest.default_path);
+    var current: std.ArrayList(manifest.Tag) = .empty;
+    for (state.entries[0..state.next]) |entry| {
+        if (entry.downloads.len > 0 and entry.id.len > 0) try current.append(allocator, entry.syncTag());
+    }
+
+    if (!state.stopped) {
+        var found: std.ArrayList([:0]const u8) = .empty;
+        for (try manifest.removed(allocator, lines, state.list, current.items)) |tag| {
+            var name_buf: [512]u8 = undefined;
+            const name = files.findTagged(&name_buf, download_dir, &tag) orelse continue;
+            try found.append(allocator, try std.fmt.allocPrintSentinel(allocator, "{s}/{s}", .{ download_dir, name }, 0));
+        }
+        removed = try found.toOwnedSlice(allocator);
+    } else {
+        // Keeps the books of the list it did not get to
+        for (lines) |line| {
+            if (std.mem.eql(u8, &line.list, &state.list)) try current.append(allocator, line.book);
+        }
+    }
+    // Whether the removed books are deleted or kept, they are not of the list anymore
+    try manifest.store(manifest.default_path, try manifest.replace(allocator, lines, state.list, current.items));
+}
+
+/// Asks the next question after a synchronization: exact copies first, then removed books
+fn askNext() void {
+    if (copies.len > 0) return offerToDeleteCopies();
+    if (removed.len > 0) return offerToDeleteRemoved();
+    if (pending_summary) |summary| {
+        pb.Message(pb.ICON_INFORMATION, t(.app_title), summary.ptr, 10000);
+        pending_summary = null;
+    }
+}
+
+/// The start of the dialog text: the summary for the first question, nothing after
+fn takeSummary() []const u8 {
+    const summary = pending_summary orelse return "";
+    pending_summary = null;
+    return summary;
+}
+
+/// Up to three file names from `paths`, one per line
+fn listNames(buf: []u8, paths: []const [:0]const u8) []const u8 {
+    var len: usize = 0;
+    for (paths[0..@min(paths.len, 3)]) |path| {
+        const name = path[(std.mem.lastIndexOfScalar(u8, path, '/') orelse 0) + 1 ..];
+        const line = std.fmt.bufPrint(buf[len..], "\n- {s}", .{name}) catch break;
+        len += line.len;
+    }
+    return buf[0..len];
+}
+
+fn offerToDeleteRemoved() void {
+    var names_buf: [256]u8 = undefined;
+    const names = listNames(&names_buf, removed);
+    const more = if (removed.len > 3) "\n- …" else "";
+    const text = if (removed.len == 1)
+        i18n.fmt(&dialog_text, .removed_found, .{ takeSummary(), names, more })
+    else
+        i18n.fmt(&dialog_text, .removed_found_many, .{ takeSummary(), removed.len, names, more });
+    pb.Dialog(pb.ICON_QUESTION, t(.app_title), text.ptr, t(.delete), t(.keep), removedAnswered);
+}
+
+/// Called by InkView with the number of the button that was pressed
+fn removedAnswered(button: c_int) callconv(.c) void {
+    const paths = removed;
+    removed = &.{};
+    if (button != 1) return;
+    var deleted: usize = 0;
+    for (paths) |path| {
+        if (std.c.unlink(path.ptr) == 0) deleted += 1;
+    }
+    pocketbook.rescanLibrary(download_dir);
+    var buf: [64]u8 = undefined;
+    pb.Message(pb.ICON_INFORMATION, t(.app_title), i18n.fmt(&buf, .removed_deleted, .{deleted}).ptr, 3000);
+}
 
 /// The files of the Downloads folder that are not from a sync
 fn untaggedFiles(allocator: std.mem.Allocator) ![][]const u8 {
@@ -267,37 +419,36 @@ fn findCopies() !void {
     copies = try found.toOwnedSlice(allocator);
 }
 
-var dialog_text: [640]u8 = undefined;
+var dialog_text: [1024]u8 = undefined;
 
-fn offerToDeleteCopies(summary: []const u8) void {
+fn offerToDeleteCopies() void {
     var names_buf: [256]u8 = undefined;
-    var len: usize = 0;
-    for (copies[0..@min(copies.len, 3)]) |path| {
-        const name = path[(std.mem.lastIndexOfScalar(u8, path, '/') orelse 0) + 1 ..];
-        const line = std.fmt.bufPrint(names_buf[len..], "\n- {s}", .{name}) catch break;
-        len += line.len;
-    }
+    const names = listNames(&names_buf, copies);
     const more = if (copies.len > 3) "\n- …" else "";
     const text = if (copies.len == 1)
-        i18n.fmt(&dialog_text, .copy_found, .{ summary, names_buf[0..len], more })
+        i18n.fmt(&dialog_text, .copy_found, .{ takeSummary(), names, more })
     else
-        i18n.fmt(&dialog_text, .copies_found, .{ summary, copies.len, names_buf[0..len], more });
+        i18n.fmt(&dialog_text, .copies_found, .{ takeSummary(), copies.len, names, more });
     pb.Dialog(pb.ICON_QUESTION, t(.app_title), text.ptr, t(.delete), t(.keep), copiesAnswered);
 }
 
 /// Called by InkView with the number of the button that was pressed
 fn copiesAnswered(button: c_int) callconv(.c) void {
-    if (button != 1) return;
-    var deleted: usize = 0;
-    for (copies) |path| {
-        if (std.c.unlink(path.ptr) == 0) deleted += 1;
-    }
+    const paths = copies;
     copies = &.{};
-    pocketbook.rescanLibrary(download_dir);
-
-    var buf: [64]u8 = undefined;
-    const msg = i18n.fmt(&buf, .copies_deleted, .{deleted});
-    pb.Message(pb.ICON_INFORMATION, t(.app_title), msg.ptr, 3000);
+    if (button == 1) {
+        var deleted: usize = 0;
+        for (paths) |path| {
+            if (std.c.unlink(path.ptr) == 0) deleted += 1;
+        }
+        pocketbook.rescanLibrary(download_dir);
+        if (removed.len == 0) {
+            var buf: [64]u8 = undefined;
+            pb.Message(pb.ICON_INFORMATION, t(.app_title), i18n.fmt(&buf, .copies_deleted, .{deleted}).ptr, 3000);
+            return;
+        }
+    }
+    askNext();
 }
 
 /// EPUB if the catalog offers it, the first format otherwise
