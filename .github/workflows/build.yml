@@ -27,6 +27,9 @@ jobs:
     steps:
       - name: Check out the code
         uses: actions/checkout@v4
+        with:
+          # The whole history and its tags, for the release notes
+          fetch-depth: 0
 
       - name: Cache Zig dependencies
         uses: actions/cache@v4
@@ -111,6 +114,16 @@ jobs:
           } > dist/version.txt
           cat dist/version.txt
           ls -la dist
+
+      - name: Write the release notes
+        run: |
+          # What changed since the release before this build, newest first. The app manager
+          # shows it before an update
+          previous="$(git describe --tags --abbrev=0 --match 'v*' HEAD^ 2> /dev/null || true)"
+          if [ -n "$previous" ]; then range="$previous..HEAD"; else range="HEAD"; fi
+          git log --no-merges --format='- %s' $range | head -n 30 > dist/notes.txt
+          [ -s dist/notes.txt ] || echo "- No changes listed" > dist/notes.txt
+          cat dist/notes.txt
 
       - name: Keep the files of this run
         uses: actions/upload-artifact@v4
