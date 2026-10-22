@@ -48,16 +48,24 @@ jobs:
         run: make test
 
       - name: Decide the kind of build
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
+          version="$(sed -n 's/^ *\.version = "\(.*\)",.*/\1/p' build.zig.zon)"
           # The app compares these with what is published when it looks for an update
           if [ "$GITHUB_REF_TYPE" = tag ] && [ "${GITHUB_REF_NAME#v}" != "$GITHUB_REF_NAME" ]; then
             channel=release; tag="$GITHUB_REF_NAME"
           elif [ "$GITHUB_EVENT_NAME" = push ] && [ "$GITHUB_REF" = refs/heads/main ]; then
-            channel=nightly; tag=nightly
+            # A version of build.zig.zon that has no release yet is released by this push,
+            # the next pushes make nightly builds again
+            if gh release view "v$version" > /dev/null 2>&1; then
+              channel=nightly; tag=nightly
+            else
+              channel=release; tag="v$version"
+            fi
           else
             channel=dev; tag=
           fi
-          version="$(sed -n 's/^ *\.version = "\(.*\)",.*/\1/p' build.zig.zon)"
           {
             echo "CHANNEL=$channel"
             echo "RELEASE_TAG=$tag"
@@ -66,7 +74,7 @@ jobs:
           } >> "$GITHUB_ENV"
 
       - name: Check that a release tag matches the version
-        if: env.CHANNEL == 'release'
+        if: env.CHANNEL == 'release' && github.ref_type == 'tag'
         run: |
           if [ "$RELEASE_TAG" != "v$APP_VERSION" ]; then
             echo "Tag $RELEASE_TAG does not match version $APP_VERSION in build.zig.zon"
@@ -129,6 +137,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "$RELEASE_TAG" dist/* \
-            --verify-tag \
+            --target "$GITHUB_SHA" \
             --title "$RELEASE_TAG" \
             --notes "Version ${APP_VERSION}. Unzip and copy \`OPDS Connector.app\` into the \`applications\` folder of your PocketBook, or use \"Check for updates\" in the app."

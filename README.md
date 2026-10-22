@@ -169,7 +169,7 @@ If an update does not start, copy the app onto the reader by hand again, as when
 **Versions of the fork** continue from 0.3.1, the version of the original it started from:
 0.3.2, 0.3.3… They have nothing to do with the versions of the original (0.4.0, 0.5.0…).
 
-**Publishing a release** (for maintainers): set the new version in `build.zig.zon`, push it to `main`, then push a tag `v<version>`, e.g. `git tag v0.4.0 && git push origin v0.4.0`. The build workflow publishes it.
+**Publishing a release** (for maintainers): set the new version in `build.zig.zon` and push it to `main`. The build workflow sees that this version has no release yet and publishes one, tagged `v<version>`. Pushing such a tag by hand works too.
 
 ## Debugging
 
