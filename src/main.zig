@@ -3,8 +3,6 @@ const net = @import("net.zig");
 const xml = @import("xml.zig");
 const server_form = @import("server_form.zig");
 const download = @import("download.zig");
-const update = @import("update.zig");
-const Policy = @import("update_check.zig").Policy;
 const search = @import("search.zig");
 const pocketbook = @import("pocketbook.zig");
 const i18n = @import("i18n.zig");
@@ -40,6 +38,8 @@ const Feed = struct {
     top: c_int = 0,
     /// How the catalog of this list is searched. If set, the first entry is the "Search" row
     search: ?search.Search = null,
+    /// The header of a page of the app itself; lists of a catalog show the name of the server
+    title: ?[:0]const u8 = null,
 
     /// Appends the next page of the catalog to the entries
     fn loadMore(feed: *Feed) !void {
@@ -71,8 +71,6 @@ var author_font: ?*pb.ifont = null;
 
 /// A list of servers, that show up on the start screen
 var catalogs: Catalogs = .{};
-/// Which updates the start screen offers, read from the configuration
-var update_policy: Policy = .off;
 
 /// The server an action (edit, delete) is ongoing for
 var server_index: ?usize = null;
@@ -166,16 +164,13 @@ fn listHandler(action: c_int, x: c_int, y: c_int, idx: c_int, state: c_int) call
             feed.pos = idx;
             const entry = feed.entries[@intCast(idx)];
 
+            if (entry.action == .pick_language) {
+                pickLanguage(@intCast(idx));
+                return 1;
+            }
             if (feeds.items.len == 1) {
-                if (entry.action == .update) {
-                    update.checkForUpdate(update_policy);
-                    return 1;
-                }
                 if (entry.action == .language) {
-                    language = language.next();
-                    configuration.storeLanguage(language);
-                    applyLanguage();
-                    rebuildCatalogRows() catch return 1;
+                    openLanguagePage() catch return 1;
                     showList();
                     return 1;
                 }
@@ -240,6 +235,7 @@ fn showList() void {
 
 /// Inside a catalog the header names it, the start screen shows the name of the app
 fn listTitle() [*:0]const u8 {
+    if (feeds.items[feeds.items.len - 1].title) |title| return title.ptr;
     if (feeds.items.len > 1) {
         if (net.currentServer()) |server| return server.name.ptr;
     }
@@ -272,20 +268,14 @@ fn rebuildCatalogRows() !void {
     // The rows live in the arena of the start screen, the old ones are dropped
     _ = start_screen.arena.reset(.retain_capacity);
 
-    update_policy = if (update.enabled) configuration.updatePolicy() else .off;
     const allocator = start_screen.arena.allocator();
-    // "Add server", maybe "Check for updates", then the language
-    const extra_rows: usize = if (update_policy == .off) 2 else 3;
+    // "Add server", then the language
+    const extra_rows: usize = 2;
     const rows = try allocator.alloc(xml.Entry, catalogs.servers.items.len + extra_rows);
     for (catalogs.servers.items, 0..) |server, i| {
         rows[i] = .{ .title = server.name, .author = server.url, .nav_url = server.url };
     }
     rows[catalogs.servers.items.len] = .{ .title = t(.add_server), .summary = t(.add_server_detail) };
-    if (update_policy != .off) {
-        var buf: [128]u8 = undefined;
-        const installed = try allocator.dupeSentinel(u8, update.describeInstalled(&buf), 0);
-        rows[rows.len - 2] = .{ .action = .update, .title = t(.check_updates), .summary = installed };
-    }
     const chosen = switch (language) {
         .auto => t(.language_auto),
         .fr => t(.language_fr),
@@ -295,6 +285,42 @@ fn rebuildCatalogRows() !void {
 
     start_screen.entries = rows;
     start_screen.pos = @min(start_screen.pos, @as(c_int, @intCast(rows.len - 1)));
+}
+
+/// The languages, in the order of the rows of their page
+const languages = [_]i18n.Choice{ .auto, .fr, .en };
+
+/// A page with the languages, the current one marked. Touching one sets it.
+fn openLanguagePage() !void {
+    var arena: std.heap.ArenaAllocator = .init(gpa);
+    errdefer arena.deinit();
+    const allocator = arena.allocator();
+    const rows = try allocator.alloc(xml.Entry, languages.len);
+    for (languages, rows) |choice, *row| {
+        row.* = .{
+            .action = .pick_language,
+            .title = switch (choice) {
+                .auto => t(.language_auto),
+                .fr => t(.language_fr),
+                .en => t(.language_en),
+            },
+            .summary = if (choice == language) t(.current_choice) else "",
+        };
+    }
+    const pos: c_int = @intCast(std.mem.indexOfScalar(i18n.Choice, &languages, language) orelse 0);
+    try feeds.append(gpa, .{ .arena = arena, .entries = rows, .pos = pos, .title = t(.language_title) });
+}
+
+/// Called with the row of the language page that was touched
+fn pickLanguage(index: usize) void {
+    language = languages[index];
+    configuration.storeLanguage(language);
+    applyLanguage();
+    // Back to the start screen, in the new language
+    var closed = feeds.pop().?;
+    closed.arena.deinit();
+    rebuildCatalogRows() catch {};
+    showList();
 }
 
 /// Lets the user pick what to do with a server

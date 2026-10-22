@@ -4,7 +4,6 @@ const i18n = @import("i18n.zig");
 
 const Server = @import("server.zig").Server;
 const Catalogs = @import("server.zig").Catalogs;
-const Policy = @import("update_check.zig").Policy;
 const Field = enum { name, url, user, password, calibre_web, timeout, sync };
 
 /// PocketBooks location for storing configuration of applications.
@@ -17,13 +16,6 @@ const defaults_key = "defaults_added";
 /// Settings are stored as "server.<index>.<field>"
 fn key(buf: *[32]u8, index: usize, field: Field) [*:0]const u8 {
     return (std.fmt.bufPrintSentinel(buf, "server.{d}.{s}", .{ index, @tagName(field) }, 0) catch unreachable).ptr;
-}
-
-/// Which updates may be offered: "updates=all" (default), "stable" or "off"
-pub fn updatePolicy() Policy {
-    const config = pb.OpenConfig(config_path, null) orelse return .stable;
-    defer pb.CloseConfigNoSave(config);
-    return Policy.parse(std.mem.span(pb.ReadString(config, "updates", "stable")));
 }
 
 /// The language of the app: "language=auto" (default, the reader's), "fr" or "en"

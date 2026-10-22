@@ -59,11 +59,9 @@ pub fn build(b: *std.Build) void {
     options.addOption([:0]const u8, "app_name", app_name);
     options.addOption([]const u8, "version", version);
     options.addOption([]const u8, "platform", @tagName(platform));
-    // What the app compares with the published builds when looking for an update
+    // Where the build comes from, for the debug log
     options.addOption([]const u8, "commit", b.option([]const u8, "commit", "Git commit the build is made from") orelse "dev");
     options.addOption([]const u8, "channel", b.option([]const u8, "channel", "nightly, release or dev (default)") orelse "dev");
-    // Without it the app offers no updates
-    options.addOption([]const u8, "update_repo", b.option([]const u8, "update-repo", "GitHub repository (owner/name) whose releases the app updates from") orelse "");
     exe.root_module.addOptions("build_options", options);
 
     exe.root_module.addImport("c", translate_c.createModule());
@@ -78,7 +76,7 @@ pub fn build(b: *std.Build) void {
     // `zig build test` runs the unit tests on the build machine, for the files that need
     // nothing from the reader (InkView, curl).
     const test_step = b.step("test", "Run the unit tests");
-    for ([_][]const u8{ "src/server.zig", "src/xml.zig", "src/failure.zig", "src/update_check.zig", "src/files.zig", "src/i18n.zig", "src/manifest.zig", "src/utils.zig" }) |file| {
+    for ([_][]const u8{ "src/server.zig", "src/xml.zig", "src/failure.zig", "src/files.zig", "src/i18n.zig", "src/manifest.zig", "src/utils.zig" }) |file| {
         const tests = b.addTest(.{
             .root_module = b.createModule(.{
                 .root_source_file = b.path(file),

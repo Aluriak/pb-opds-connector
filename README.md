@@ -106,7 +106,6 @@ server.1.url=https://www.gutenberg.org/ebooks.opds/
 
 * The numbers start at 0 and must follow each other. The list ends at the first missing number.
 * `user`, `password`, `calibre_web`, `timeout` and `sync` can be left out.
-* `updates=` sets which updates the app offers, see [Updates](#updates). The URL rules above apply here as well.
 * Without `defaults_added=1` the default catalogs are put in front of your servers on the next start, and the line is added.
 * The app rewrites the file whenever you add, edit or delete a server on the reader, from the list it loaded at start. Close the app completely (also in the task switcher) before editing the file, or your changes are overwritten.
 * **The last line, like `#f78a2ef5`, is a checksum** the reader adds when it saves the file. If it does not match the content, the reader silently uses the previous version, `opds-connector.cfg.back`, and your changes are lost. After editing the file, fix the checksum with `python3 scripts/fix-config-checksum.py opds-connector.cfg`.
@@ -119,7 +118,7 @@ server.1.url=https://www.gutenberg.org/ebooks.opds/
 ### Language
 
 The app speaks English or French. By default it follows the reader's language; the last row of
-the start screen switches between the reader's language, French and English. The choice is kept
+the start screen opens a page to choose the reader's language, French and English. The choice is kept
 in the configuration file as `language=auto`, `fr` or `en`.
 
 ## Synchronization
@@ -152,26 +151,9 @@ Many catalogs can be searched. If a catalog offers this, every list inside it st
 
 ## Updates
 
-Builds from the [GitHub releases](https://github.com/Aluriak/pb-opds-connector/releases) can update themselves. The last row of the start screen, "Check for updates", shows the installed version.
-
-1. Open "Check for updates". The app looks for a newer build.
-2. If there is one, it shows its version, whether it is a release or a nightly build, and asks whether to install it.
-3. After "Install", close the app and open it again.
-
-Two kinds of builds are offered:
-
-* **Releases**: versions that were tagged, offered when their version number is higher than the installed one.
-* **Nightly builds**: built from every change to the code, offered when they were built from another change than the installed one. They are newer, and less tested.
-
-Choose what is offered with a line in [the configuration file](#configuration-file):
-
-| Line | Effect |
-|---|---|
-| `updates=stable` | Releases only. This is the default. |
-| `updates=all` | Releases and nightly builds, which are made from every change and less tested. |
-| `updates=off` | No "Check for updates" row. |
-
-If an update does not start, copy the app onto the reader by hand again, as when installing it.
+Install and update the app with the [App Manager](https://github.com/Aluriak/pb-apps), which
+follows the stable releases of this repository, or its nightly builds if you choose so. The app
+no longer updates itself.
 
 **Versions of the fork** continue from 0.3.1, the version of the original it started from:
 0.3.2, 0.3.3… They have nothing to do with the versions of the original (0.4.0, 0.5.0…).

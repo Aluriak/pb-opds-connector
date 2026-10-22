@@ -200,7 +200,7 @@ pub const Entry = struct {
         }
     }
 
-    pub const Action = enum { none, search, sync, update, language };
+    pub const Action = enum { none, search, sync, language, pick_language };
 
     /// The hash of the entry's id that names a synchronized book, as 16 hex digits.
     /// It stays the same when the title or author change in the catalog.

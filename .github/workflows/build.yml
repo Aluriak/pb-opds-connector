@@ -73,7 +73,7 @@ jobs:
             echo "CHANNEL=$channel"
             echo "RELEASE_TAG=$tag"
             echo "APP_VERSION=$version"
-            echo "ZIGFLAGS=-Dchannel=$channel -Dcommit=$GITHUB_SHA -Dupdate-repo=$GITHUB_REPOSITORY"
+            echo "ZIGFLAGS=-Dchannel=$channel -Dcommit=$GITHUB_SHA"
           } >> "$GITHUB_ENV"
 
       - name: Check that a release tag matches the version
