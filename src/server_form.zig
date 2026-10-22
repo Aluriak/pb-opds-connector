@@ -69,16 +69,27 @@ const ServerFields = struct {
         return rows;
     }
 
+    // InkView's form stores password rows encrypted (WriteSecret), so they are
+    // read and written the same way. Everything else is plain text.
     fn write(fields: ServerFields, cfg: *pb.iconfig) void {
         inline for (names) |field| {
-            pb.WriteString(cfg, field, @field(fields, field).value.ptr);
+            const f = @field(fields, field);
+            if (f.type == pb.CFG_PASSWORD) {
+                pb.WriteSecret(cfg, field, f.value.ptr);
+            } else {
+                pb.WriteString(cfg, field, f.value.ptr);
+            }
         }
     }
 
     fn read(cfg: *pb.iconfig) ServerFields {
         var fields: ServerFields = .{};
         inline for (names) |field| {
-            @field(fields, field).value = std.mem.span(pb.ReadString(cfg, field, ""));
+            const f = &@field(fields, field);
+            f.value = std.mem.span(if (f.type == pb.CFG_PASSWORD)
+                pb.ReadSecret(cfg, field, no_secret)
+            else
+                pb.ReadString(cfg, field, ""));
         }
         return fields;
     }
@@ -89,6 +100,10 @@ const ServerFields = struct {
         }
     }
 };
+
+/// What ReadSecret returns when there is nothing to decrypt. Everything else it
+/// returns was allocated and must be freed.
+const no_secret: [:0]const u8 = "";
 
 var form_rows = ServerFields.getFormRows();
 
@@ -128,6 +143,7 @@ fn closeForm(open_config: *pb.iconfig) !?Server {
     }
 
     const fields = ServerFields.read(open_config);
+    defer if (fields.password.value.ptr != no_secret.ptr) std.c.free(@constCast(fields.password.value.ptr));
     const name = std.mem.trim(u8, fields.name.value, " ");
     const address = std.mem.trim(u8, fields.url.value, " ");
     const use_http_11 = std.mem.eql(u8, fields.use_http_11.value, "1");
