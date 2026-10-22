@@ -96,7 +96,8 @@ server.1.url=https://www.gutenberg.org/ebooks.opds/
 For a server with "Allow full sync" set to "Yes", every list of books starts with a "Synchronize" row (after "Search", if there is one). Opening it loads the whole list, then downloads each book that is not on the reader yet, in EPUB if the catalog offers it. A summary tells how many were downloaded, already there or failed.
 
 * Books are recognized by the id the catalog gives them, not by title or author, so a book renamed in the catalog is not downloaded again. Calibre and Calibre-Web give every book such an id.
-* They are saved in the Downloads folder under names like `opds-3f2a9c41b07de815.epub`. The library shows them with their title and author as usual. Books you download by hand from such a server get the same kind of name, so a sync does not fetch them a second time.
+* They are saved in the Downloads folder as `<author> - <title>.<tag>.epub`, e.g. `Jean Hegland - Le Temps d'après.3f2a9c41b07de815.epub`. The tag comes from the book's id and is how the sync finds the book again, so leave it in the name. When a title or author changes in the catalog, the next sync renames the file. Books you download by hand from such a server get the same kind of name, so a sync does not fetch them a second time.
+* Books that were on the reader before under another name, for example copied over USB, are not recognized and get downloaded again.
 * Nothing is ever deleted or replaced. A book removed from the list stays on the reader, and a book whose file changed in the catalog is not downloaded again.
 * The sync runs while the app is open. If it is cut short, open "Synchronize" again: what is already on the reader is skipped.
 

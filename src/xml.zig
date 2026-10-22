@@ -10,8 +10,14 @@ const max_title_in_filename = 120;
 /// "<author> - <title>.<ext>" at its longest
 pub const max_filename = max_author_in_filename + " - ".len + max_title_in_filename + ".fb2.zip".len;
 
-/// "opds-<16 hex digits>.<ext>" at its longest
-pub const max_sync_name = "opds-".len + 16 + ".fb2.zip".len;
+/// "<author> - <title>.<16 hex digits of the id>.<ext>" at its longest
+pub const max_sync_name = max_filename + ".".len + sync_tag_len;
+comptime {
+    // The extension of a file found on the reader may be any of these
+    for (std.enums.values(BookFormat)) |format| std.debug.assert(format.extension().len <= ".fb2.zip".len);
+}
+/// The hash of an entry's id in the name of a synchronized book
+pub const sync_tag_len = 16;
 
 /// Upper bound per entry, so the format menu always fits on the screen
 pub const max_downloads = 8;
@@ -161,14 +167,31 @@ pub const Entry = struct {
 
     pub const Action = enum { none, search, sync, update };
 
-    /// The name a synchronized book is saved under: "opds-<hash of the id>.<ext>". It depends on
-    /// the id only, so a book is found again after its title or author changed.
-    pub fn syncName(entry: Entry, buf: *[max_sync_name]u8, format: BookFormat) []const u8 {
-        return std.fmt.bufPrint(buf, "opds-{x:0>16}.{s}", .{ std.hash.Wyhash.hash(0, entry.id), format.extension() }) catch unreachable;
+    /// The hash of the entry's id that names a synchronized book, as 16 hex digits.
+    /// It stays the same when the title or author change in the catalog.
+    pub fn syncTag(entry: Entry) [sync_tag_len]u8 {
+        var tag: [sync_tag_len]u8 = undefined;
+        _ = std.fmt.bufPrint(&tag, "{x:0>16}", .{std.hash.Wyhash.hash(0, entry.id)}) catch unreachable;
+        return tag;
+    }
+
+    /// The name a synchronized book is saved under: "<author> - <title>.<tag>.<ext>".
+    /// The sync finds a book by its tag alone, whatever the rest of the name became.
+    pub fn syncName(entry: Entry, buf: *[max_sync_name]u8, extension: []const u8) []const u8 {
+        const len = entry.writeStem(buf[0..max_filename]);
+        const rest = std.fmt.bufPrint(buf[len..], ".{s}.{s}", .{ entry.syncTag(), extension }) catch unreachable;
+        return buf[0 .. len + rest.len];
     }
 
     /// Builds the name a download of this entry is saved under: "<author> - <title>.<ext>".
     pub fn saveName(entry: Entry, buf: *[max_filename]u8, format: BookFormat) []const u8 {
+        const len = entry.writeStem(buf);
+        const ext = std.fmt.bufPrint(buf[len..], ".{s}", .{format.extension()}) catch unreachable;
+        return buf[0 .. len + ext.len];
+    }
+
+    /// Writes "<author> - <title>" to the start of `buf`, returns its length
+    fn writeStem(entry: Entry, buf: *[max_filename]u8) usize {
         var len = utils.cleanName(buf[0..max_author_in_filename], entry.author, true);
         if (len > 0) {
             @memcpy(buf[len..][0..3], " - ");
@@ -182,9 +205,7 @@ pub const Entry = struct {
             @memcpy(buf[len..][0..4], "book");
             len += 4;
         }
-
-        const ext = std.fmt.bufPrint(buf[len..], ".{s}", .{format.extension()}) catch unreachable;
-        return buf[0 .. len + ext.len];
+        return len;
     }
 };
 
@@ -556,17 +577,28 @@ test "entries keep their id, the id of the feed itself is not taken" {
     try std.testing.expectEqualStrings("urn:uuid:1b8f", feed.entries[0].id);
 }
 
-test "syncName depends on the id and the format only" {
-    var a: [max_sync_name]u8 = undefined;
-    var b: [max_sync_name]u8 = undefined;
+test "syncName gives author and title, then the tag of the id" {
+    var buf: [max_sync_name]u8 = undefined;
+    const entry: Entry = .{ .id = "urn:uuid:1b8f", .title = "Le Temps d'après", .author = "Jean Hegland" };
+    const tag = entry.syncTag();
+    const expected = "Jean Hegland - Le Temps d'après." ++ tag ++ ".epub";
+    try std.testing.expectEqualStrings(expected, entry.syncName(&buf, "epub"));
+}
+
+test "syncTag depends on the id only" {
     const before: Entry = .{ .id = "urn:uuid:1b8f", .title = "Dune", .author = "Frank Herbert" };
     const after: Entry = .{ .id = "urn:uuid:1b8f", .title = "Dune (new edition)", .author = "F. Herbert" };
     const other: Entry = .{ .id = "urn:uuid:2c9a", .title = "Dune", .author = "Frank Herbert" };
 
-    const name = before.syncName(&a, .epub);
-    try std.testing.expectEqualStrings(name, after.syncName(&b, .epub));
-    try std.testing.expect(!std.mem.eql(u8, name, other.syncName(&b, .epub)));
-    try std.testing.expect(std.mem.startsWith(u8, name, "opds-"));
-    try std.testing.expect(std.mem.endsWith(u8, name, ".epub"));
-    try std.testing.expectEqual(max_sync_name - ".fb2.zip".len + ".epub".len, name.len);
+    try std.testing.expectEqualStrings(&before.syncTag(), &after.syncTag());
+    try std.testing.expect(!std.mem.eql(u8, &before.syncTag(), &other.syncTag()));
+    for (before.syncTag()) |char| try std.testing.expect(std.ascii.isHex(char));
+}
+
+test "syncName fits its buffer with the longest author, title and format" {
+    var buf: [max_sync_name]u8 = undefined;
+    const long: [300:0]u8 = @splat('x');
+    const entry: Entry = .{ .id = "urn:uuid:1b8f", .title = &long, .author = &long };
+    const name = entry.syncName(&buf, "fb2.zip");
+    try std.testing.expect(std.mem.endsWith(u8, name, ".fb2.zip"));
 }

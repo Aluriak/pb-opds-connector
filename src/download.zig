@@ -4,6 +4,7 @@ const net = @import("net.zig");
 const pocketbook = @import("pocketbook.zig");
 const trace = pocketbook.trace;
 const utils = @import("utils.zig");
+const files = @import("files.zig");
 const xml = @import("xml.zig");
 
 const pb = @import("c");
@@ -56,16 +57,16 @@ fn menuHandler(index: c_int) callconv(.c) void {
     downloadBook(menu_entry, menu_entry.downloads[@intCast(index - 1)]);
 }
 
-/// The name a book is saved under. Books of a catalog that is synchronized are named after
+/// The name a book is saved under. Books of a catalog that is synchronized carry the tag of
 /// their id, so the sync finds them again whether they were downloaded by hand or not.
-fn fileName(entry: xml.Entry, format: xml.BookFormat, buf: *[xml.max_filename]u8) []const u8 {
+fn fileName(entry: xml.Entry, format: xml.BookFormat, buf: *[xml.max_sync_name]u8) []const u8 {
     const synced = if (net.currentServer()) |s| s.options.sync else false;
-    if (synced and entry.id.len > 0) return entry.syncName(buf[0..xml.max_sync_name], format);
-    return entry.saveName(buf, format);
+    if (synced and entry.id.len > 0) return entry.syncName(buf, format.extension());
+    return entry.saveName(buf[0..xml.max_filename], format);
 }
 
 fn downloadBook(entry: xml.Entry, download: xml.Download) void {
-    var name_buf: [xml.max_filename]u8 = undefined;
+    var name_buf: [xml.max_sync_name]u8 = undefined;
     const filename = fileName(entry, download.format, &name_buf);
 
     if (!pocketbook.ensureNetwork()) {
@@ -105,6 +106,8 @@ fn onProgress(downloaded: u64, total: u64) void {
 const SyncResult = struct {
     downloaded: usize = 0,
     present: usize = 0,
+    /// Books on the reader that got their current name, e.g. after a change of title
+    renamed: usize = 0,
     failed: usize = 0,
     /// Books without an id cannot be found again, so they are left out
     skipped: usize = 0,
@@ -135,8 +138,9 @@ pub fn synchronize(entries: []const xml.Entry) void {
             result.skipped += 1;
             continue;
         }
-        if (isPresent(entry)) {
+        if (findPresent(entry)) |present| {
             result.present += 1;
+            if (present.renamed) result.renamed += 1;
             continue;
         }
 
@@ -153,13 +157,15 @@ pub fn synchronize(entries: []const xml.Entry) void {
     }
 
     pb.CloseProgressbar();
-    if (result.downloaded > 0) pocketbook.rescanLibrary(download_dir);
+    if (result.downloaded > 0 or result.renamed > 0) pocketbook.rescanLibrary(download_dir);
 
-    var msg_buf: [256]u8 = undefined;
+    var renamed_buf: [48]u8 = undefined;
+    const renamed = if (result.renamed > 0) std.fmt.bufPrint(&renamed_buf, " ({d} renamed)", .{result.renamed}) catch "" else "";
+    var msg_buf: [320]u8 = undefined;
     const msg = std.fmt.bufPrintSentinel(
         &msg_buf,
-        "Synchronized: {d} downloaded, {d} already on the reader, {d} failed{s}",
-        .{ result.downloaded, result.present, result.failed, if (result.skipped > 0) ", some books have no id and were left out." else "." },
+        "Synchronized: {d} downloaded, {d} already on the reader{s}, {d} failed{s}",
+        .{ result.downloaded, result.present, renamed, result.failed, if (result.skipped > 0) ", some books have no id and were left out." else "." },
         0,
     ) catch "Synchronized.";
     pb.Message(if (result.failed > 0) pb.ICON_WARNING else pb.ICON_INFORMATION, app_title, msg.ptr, 10000);
@@ -173,28 +179,44 @@ fn preferred(downloads: []const xml.Download) xml.Download {
     return downloads[0];
 }
 
-/// Whether the book is on the reader in any format
-fn isPresent(entry: xml.Entry) bool {
-    for (std.enums.values(xml.BookFormat)) |format| {
-        var name_buf: [xml.max_sync_name]u8 = undefined;
-        var path_buf: [256]u8 = undefined;
-        const path = std.fmt.bufPrintSentinel(&path_buf, "{s}/{s}", .{ download_dir, entry.syncName(&name_buf, format) }, 0) catch continue;
-        if (std.c.access(path.ptr, 0) == 0) return true;
-    }
-    return false;
+const Present = struct { renamed: bool };
+
+/// Whether the book is on the reader, in any format and under any title: its file is found
+/// by the tag of its id. A file whose name is not the current one is renamed, so names follow
+/// the catalog and files named the earlier way ("opds-<tag>.epub") become readable.
+fn findPresent(entry: xml.Entry) ?Present {
+    const tag = entry.syncTag();
+    var found_buf: [512]u8 = undefined;
+    const found = files.findTagged(&found_buf, download_dir, &tag) orelse return null;
+
+    const extension = files.tagExtension(found, &tag);
+    // An extension the app does not know cannot be from a sync, leave the file alone
+    if (extension.len == 0 or extension.len > ".fb2.zip".len) return .{ .renamed = false };
+
+    // The current name, keeping the extension of the file found
+    var wanted_buf: [xml.max_sync_name]u8 = undefined;
+    const wanted = entry.syncName(&wanted_buf, extension);
+    if (std.mem.eql(u8, found, wanted)) return .{ .renamed = false };
+
+    var from_buf: [600]u8 = undefined;
+    var to_buf: [600]u8 = undefined;
+    const from = std.fmt.bufPrintSentinel(&from_buf, "{s}/{s}", .{ download_dir, found }, 0) catch return .{ .renamed = false };
+    const to = std.fmt.bufPrintSentinel(&to_buf, "{s}/{s}", .{ download_dir, wanted }, 0) catch return .{ .renamed = false };
+    // A failed rename leaves the book where it is, it is still on the reader
+    return .{ .renamed = std.c.rename(from.ptr, to.ptr) == 0 };
 }
 
 /// Downloads under a temporary name first, so a download cut short is never taken for a book
 fn syncBook(entry: xml.Entry, download: xml.Download) !void {
     var name_buf: [xml.max_sync_name]u8 = undefined;
-    const name = entry.syncName(&name_buf, download.format);
+    const name = entry.syncName(&name_buf, download.format.extension());
 
     var part_buf: [xml.max_sync_name + ".part".len]u8 = undefined;
     const part = try std.fmt.bufPrint(&part_buf, "{s}.part", .{name});
     try net.download(download.url, download_dir, part, null);
 
-    var from_buf: [256]u8 = undefined;
-    var to_buf: [256]u8 = undefined;
+    var from_buf: [600]u8 = undefined;
+    var to_buf: [600]u8 = undefined;
     const from = try std.fmt.bufPrintSentinel(&from_buf, "{s}/{s}", .{ download_dir, part }, 0);
     const to = try std.fmt.bufPrintSentinel(&to_buf, "{s}/{s}", .{ download_dir, name }, 0);
     if (std.c.rename(from.ptr, to.ptr) != 0) {
