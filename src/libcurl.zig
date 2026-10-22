@@ -3,6 +3,7 @@
 pub const CURL = opaque {};
 pub const curl_slist = opaque {};
 pub const CURLE_OK: c_int = 0;
+pub const CURLAUTH_BASIC: c_long = 1;
 pub const CURLAUTH_ANY: c_long = ~@as(c_long, 0x10);
 pub const CURL_HTTP_VERSION_1_1: c_long = 2;
 pub const CURLOPT_TIMEOUT: c_int = 13;

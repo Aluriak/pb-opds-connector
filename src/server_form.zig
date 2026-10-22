@@ -37,6 +37,8 @@ const ServerFields = struct {
     user: ServerField = .{ .label = "User name (optional)" },
     password: ServerField = .{ .label = "Password (optional)", .type = pb.CFG_PASSWORD },
     use_http_11: ServerField = .{ .label = "Use HTTP/1.1", .value = "0", .type = pb.CFG_INDEX },
+    basic_auth: ServerField = .{ .label = "Send the login right away (Calibre-Web)", .value = "0", .type = pb.CFG_INDEX },
+    timeout: ServerField = .{ .label = "Connection timeout in seconds (optional)" },
 
     const names = @typeInfo(ServerFields).@"struct".field_names;
 
@@ -46,7 +48,12 @@ const ServerFields = struct {
         fields.url.value = server.url;
         fields.user.value = server.user;
         fields.password.value = server.password;
-        fields.use_http_11.value = if (server.use_http_11) "1" else "0";
+        fields.use_http_11.value = if (server.options.use_http_11) "1" else "0";
+        fields.basic_auth.value = if (server.options.basic_auth) "1" else "0";
+        fields.timeout.value = if (server.options.timeout > 0)
+            std.fmt.bufPrintSentinel(&timeout_text, "{d}", .{server.options.timeout}, 0) catch ""
+        else
+            "";
         return fields;
     }
 
@@ -105,6 +112,9 @@ const ServerFields = struct {
 /// returns was allocated and must be freed.
 const no_secret: [:0]const u8 = "";
 
+/// The timeout of the server being edited, as text for the form
+var timeout_text: [8]u8 = undefined;
+
 var form_rows = ServerFields.getFormRows();
 
 /// Shows the "Add server" form
@@ -146,7 +156,12 @@ fn closeForm(open_config: *pb.iconfig) !?Server {
     defer if (fields.password.value.ptr != no_secret.ptr) std.c.free(@constCast(fields.password.value.ptr));
     const name = std.mem.trim(u8, fields.name.value, " ");
     const address = std.mem.trim(u8, fields.url.value, " ");
-    const use_http_11 = std.mem.eql(u8, fields.use_http_11.value, "1");
+    const options: Server.Options = .{
+        .use_http_11 = std.mem.eql(u8, fields.use_http_11.value, "1"),
+        .basic_auth = std.mem.eql(u8, fields.basic_auth.value, "1"),
+        // Anything but a number keeps the default
+        .timeout = std.fmt.parseInt(u16, std.mem.trim(u8, fields.timeout.value, " "), 10) catch 0,
+    };
     if (name.len == 0 or address.len == 0) return null;
 
     return try Server.init(
@@ -155,6 +170,6 @@ fn closeForm(open_config: *pb.iconfig) !?Server {
         address,
         fields.user.value,
         fields.password.value,
-        use_http_11,
+        options,
     );
 }

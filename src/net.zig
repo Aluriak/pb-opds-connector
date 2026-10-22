@@ -9,6 +9,9 @@ const ec_curves = "X25519:P-256";
 const user_agent = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36";
 const accept = "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8";
 
+/// Seconds to wait for a connection, unless the server sets its own
+const default_connect_timeout = 5;
+
 /// The server the user is browsing
 var server: ?Server = null;
 
@@ -72,7 +75,8 @@ fn perform(url: [:0]const u8, target: Target) !void {
     _ = curl.curl_easy_setopt(handle, curl.CURLOPT_HTTPHEADER, headers);
 
     _ = curl.curl_easy_setopt(handle, curl.CURLOPT_TIMEOUT, @as(c_long, 120));
-    _ = curl.curl_easy_setopt(handle, curl.CURLOPT_CONNECTTIMEOUT, @as(c_long, 5));
+    const connect_timeout: c_long = if (server) |s| (if (s.options.timeout > 0) s.options.timeout else default_connect_timeout) else default_connect_timeout;
+    _ = curl.curl_easy_setopt(handle, curl.CURLOPT_CONNECTTIMEOUT, connect_timeout);
     _ = curl.curl_easy_setopt(handle, curl.CURLOPT_FOLLOWLOCATION, @as(c_long, 1));
     // Treat HTTP 4xx/5xx as an error instead of handing the error page to the caller
     _ = curl.curl_easy_setopt(handle, curl.CURLOPT_FAILONERROR, @as(c_long, 1));
@@ -82,14 +86,15 @@ fn perform(url: [:0]const u8, target: Target) !void {
 
     if (server) |s| {
         // Same as `curl --http1.1`
-        if (s.use_http_11) {
+        if (s.options.use_http_11) {
             _ = curl.curl_easy_setopt(handle, curl.CURLOPT_HTTP_VERSION, curl.CURL_HTTP_VERSION_1_1);
         }
 
         if (s.hasLogin() and s.owns(url)) {
             var buf: [160]u8 = undefined;
             if (s.userpwd(&buf)) |userpwd| {
-                _ = curl.curl_easy_setopt(handle, curl.CURLOPT_HTTPAUTH, curl.CURLAUTH_ANY);
+                const auth = if (s.options.basic_auth) curl.CURLAUTH_BASIC else curl.CURLAUTH_ANY;
+                _ = curl.curl_easy_setopt(handle, curl.CURLOPT_HTTPAUTH, auth);
                 _ = curl.curl_easy_setopt(handle, curl.CURLOPT_USERPWD, userpwd.ptr);
             } else |_| {}
         }

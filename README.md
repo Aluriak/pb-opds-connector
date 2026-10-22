@@ -48,6 +48,9 @@ Besides the default catalogs you can add your own OPDS servers, for example Cali
 | URL | yes | For example `192.168.1.20:8080`. |
 | User name | no | Leave empty if the server needs no login. |
 | Password | no | Only used together with a user name. |
+| Use HTTP/1.1 | no | See "Bot detection" above. |
+| Send the login right away | no | Set it for Calibre-Web. Otherwise every request first goes out without the login, to learn which method the server wants, and Calibre-Web counts that as a failed login: after three a minute it refuses the login for a while. |
+| Connection timeout | no | Seconds to wait for the server to answer the connection, 5 when empty. Raise it for a slow or distant server. |
 
 **What happens to the URL**
 
