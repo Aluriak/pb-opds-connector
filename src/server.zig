@@ -31,6 +31,8 @@ pub const Server = struct {
         /// Lists of the catalog get a "Synchronize" row, which downloads all their books
         /// that are not on the reader yet
         sync: bool = false,
+        /// Lists of books show the covers the catalog gives
+        covers: bool = true,
     };
 
     /// Creates a server from what the user entered. This is the only place the address of a

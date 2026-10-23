@@ -32,6 +32,7 @@ const ServerFields = struct {
     calibre_web: ServerField = .{ .value = "0", .kind = pb.CFG_INDEX },
     timeout: ServerField = .{},
     sync: ServerField = .{ .value = "0", .kind = pb.CFG_INDEX },
+    covers: ServerField = .{ .value = "1", .kind = pb.CFG_INDEX },
 
     const names = @typeInfo(ServerFields).@"struct".field_names;
 
@@ -43,6 +44,7 @@ const ServerFields = struct {
         fields.password.value = server.password;
         fields.calibre_web.value = if (server.options.calibre_web) "1" else "0";
         fields.sync.value = if (server.options.sync) "1" else "0";
+        fields.covers.value = if (server.options.covers) "1" else "0";
         fields.timeout.value = if (server.options.timeout > 0)
             std.fmt.bufPrintSentinel(&timeout_text, "{d}", .{server.options.timeout}, 0) catch ""
         else
@@ -120,7 +122,7 @@ var form_rows = ServerFields.getFormRows();
 fn translateForm() void {
     const labels = [_][:0]const u8{
         t(.field_name),        t(.field_url),     t(.field_user), t(.field_password),
-        t(.field_calibre_web), t(.field_timeout), t(.field_sync),
+        t(.field_calibre_web), t(.field_timeout), t(.field_sync), t(.field_covers),
     };
     comptime std.debug.assert(labels.len == ServerFields.names.len);
     for (labels, 0..) |label, i| form_rows[i].text = @constCast(label.ptr);
@@ -173,6 +175,7 @@ fn closeForm(open_config: *pb.iconfig) !?Server {
     const options: Server.Options = .{
         .calibre_web = isYes(fields.calibre_web.value),
         .sync = isYes(fields.sync.value),
+        .covers = isYes(fields.covers.value),
         // Anything but a number keeps the default
         .timeout = std.fmt.parseInt(u16, std.mem.trim(u8, fields.timeout.value, " "), 10) catch 0,
     };

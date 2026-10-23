@@ -45,11 +45,14 @@ An OPDS connector for PocketBook e-readers. Browse catalogs and download books s
 ## Usage
 
 1. Check the compatibility table below to find the platform of your device.
-2. Download the matching archive of this fork from the [nightly release](https://github.com/Aluriak/pb-opds-connector/releases/tag/nightly):
+2. Install it with the [App Manager](https://github.com/Aluriak/pb-apps), or download the
+   matching archive from the [latest release](https://github.com/Aluriak/pb-opds-connector/releases/latest):
    `opds-connector-<platform>.zip`. Make sure you get the correct platform.
    For the original app, see its [releases page](https://codeberg.org/codedge/pb-opds-connector/releases).
-3. Unzip it and copy `OPDS Connector.app` into the `applications` folder of your reader.
-4. Open "OPDS Connector" from the applications list on the reader.
+3. Unzip it and copy the `.app` file into the `applications` folder of your reader.
+4. Open it from the applications list on the reader.
+5. Touch a book to see its sheet: cover, details and description, with a button to download
+   it. A long press downloads it right away.
 
 ## Configuration
 
@@ -68,6 +71,7 @@ Besides the default catalogs you can add your own OPDS servers, for example Cali
 | Password | no | Only used together with a user name. |
 | Calibre-Web | no | Choose "Yes" for Calibre-Web. The login is then sent right away, instead of after a first try without it, which Calibre-Web counts as a failed login (it allows three a minute). |
 | Allow full sync | no | Lists of books of this catalog get a "Synchronize" row, see [Synchronization](#synchronization). |
+| Show covers | yes | Lists of books show the covers the catalog gives. They are downloaded once and kept in `system/cache/opds-connector`, which can be deleted at any time. |
 | Connection timeout | no | Seconds to wait for the server to answer the connection, 5 when empty. Raise it for a slow or distant server. |
 
 **What happens to the URL**
@@ -98,6 +102,7 @@ server.0.password=secret
 server.0.calibre_web=1
 server.0.timeout=30
 server.0.sync=1
+server.0.covers=0
 server.1.name=Project Gutenberg
 server.1.url=https://www.gutenberg.org/ebooks.opds/
 
@@ -105,7 +110,7 @@ server.1.url=https://www.gutenberg.org/ebooks.opds/
 ```
 
 * The numbers start at 0 and must follow each other. The list ends at the first missing number.
-* `user`, `password`, `calibre_web`, `timeout` and `sync` can be left out.
+* `user`, `password`, `calibre_web`, `timeout`, `sync` and `covers` can be left out. Covers are shown unless `covers=0`.
 * Without `defaults_added=1` the default catalogs are put in front of your servers on the next start, and the line is added.
 * The app rewrites the file whenever you add, edit or delete a server on the reader, from the list it loaded at start. Close the app completely (also in the task switcher) before editing the file, or your changes are overwritten.
 * **The last line, like `#f78a2ef5`, is a checksum** the reader adds when it saves the file. If it does not match the content, the reader silently uses the previous version, `opds-connector.cfg.back`, and your changes are lost. After editing the file, fix the checksum with `python3 scripts/fix-config-checksum.py opds-connector.cfg`.

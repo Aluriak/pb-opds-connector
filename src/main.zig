@@ -3,6 +3,8 @@ const net = @import("net.zig");
 const xml = @import("xml.zig");
 const server_form = @import("server_form.zig");
 const download = @import("download.zig");
+const sheet = @import("sheet.zig");
+const covers = @import("covers.zig");
 const search = @import("search.zig");
 const pocketbook = @import("pocketbook.zig");
 const i18n = @import("i18n.zig");
@@ -40,6 +42,26 @@ const Feed = struct {
     search: ?search.Search = null,
     /// The header of a page of the app itself; lists of a catalog show the name of the server
     title: ?[:0]const u8 = null,
+    /// Small covers of the entries drawn so far, by index; null for an entry without one
+    thumbs: std.AutoHashMapUnmanaged(usize, ?*pb.ibitmap) = .empty,
+
+    fn deinit(feed: *Feed) void {
+        var it = feed.thumbs.valueIterator();
+        while (it.next()) |thumb| if (thumb.*) |bitmap| covers.free(bitmap);
+        feed.thumbs.deinit(gpa);
+        feed.arena.deinit();
+    }
+
+    /// Whether rows get a cover: lists of books of a server that shows them
+    fn showsCovers(feed: *const Feed) bool {
+        if (feeds.items.len < 2 or feed.title != null) return false;
+        const server = net.currentServer() orelse return false;
+        if (!server.options.covers) return false;
+        for (feed.entries) |entry| {
+            if (entry.thumbnail_url != null or entry.cover_url != null) return true;
+        }
+        return false;
+    }
 
     /// Appends the next page of the catalog to the entries
     fn loadMore(feed: *Feed) !void {
@@ -113,7 +135,7 @@ fn mainHandler(event_type: c_int, par1: c_int, par2: c_int) callconv(.c) c_int {
             if (par1 == pb.IV_KEY_BACK) pb.CloseApp();
         },
         pb.EVT_EXIT => {
-            for (feeds.items) |*feed| feed.arena.deinit();
+            for (feeds.items) |*feed| feed.deinit();
             feeds.deinit(gpa);
             if (title_font) |f| pb.CloseFont(f);
             if (author_font) |f| pb.CloseFont(f);
@@ -137,16 +159,29 @@ fn listHandler(action: c_int, x: c_int, y: c_int, idx: c_int, state: c_int) call
             const entry = feed.entries[@intCast(idx)];
 
             const width = pb.ScreenWidth();
-            const text_width = width - 2 * padding;
             const line_height = @divTrunc(item_height - 2 * padding, 2);
             const flags = pb.ALIGN_LEFT | pb.VALIGN_MIDDLE | pb.DOTS;
 
+            // The cover on the left, the text after it
+            var text_x = x + padding;
+            if (feed.showsCovers()) {
+                const thumb_h = item_height - 2 * padding;
+                const thumb_w = @divTrunc(thumb_h * 2, 3);
+                if (thumbFor(feed, @intCast(idx), entry, thumb_w, thumb_h)) |bitmap| {
+                    const bw: c_int = bitmap.width;
+                    const bh: c_int = bitmap.height;
+                    pb.DrawBitmap(text_x + @divTrunc(thumb_w - bw, 2), y + padding + @divTrunc(thumb_h - bh, 2), bitmap);
+                }
+                text_x += thumb_w + padding;
+            }
+            const text_width = x + width - padding - text_x;
+
             pb.SetFont(title_font, pb.BLACK);
-            _ = pb.DrawTextRect(x + padding, y + padding, text_width, line_height, entry.title.ptr, flags);
+            _ = pb.DrawTextRect(text_x, y + padding, text_width, line_height, entry.title.ptr, flags);
             pb.SetFont(author_font, pb.DGRAY);
             var detail_buf: [256]u8 = undefined;
             const detail = entry.detail(&detail_buf);
-            _ = pb.DrawTextRect(x + padding, y + padding + line_height, text_width, line_height, detail.ptr, flags);
+            _ = pb.DrawTextRect(text_x, y + padding + line_height, text_width, line_height, detail.ptr, flags);
 
             pb.DrawLine(x, y + item_height - 1, x + width, y + item_height - 1, pb.LGRAY);
             if (state != 0) pb.DrawSelection(x, y, width, item_height, pb.BLACK);
@@ -191,7 +226,8 @@ fn listHandler(action: c_int, x: c_int, y: c_int, idx: c_int, state: c_int) call
                 // Shows the list again once the books are downloaded
                 synchronize(feed);
             } else if (entry.downloads.len > 0) {
-                download.start(entry);
+                // The sheet of the book first, it has the button to download it
+                sheet.open(entry, sheetClosed, pb.QueryNetwork() & pb.NET_CONNECTED != 0);
             } else if (entry.nav_url) |url| {
                 // Pushes onto feeds, `feed` must not be used afterwards
                 openFeed(url);
@@ -200,7 +236,12 @@ fn listHandler(action: c_int, x: c_int, y: c_int, idx: c_int, state: c_int) call
             }
         },
         pb.LIST_MENU => {
-            // Long press or menu key: servers can be edited or deleted
+            // Long press or menu key on a book: downloaded right away, without its sheet
+            if (feeds.items.len > 1 and idx >= 0 and idx < feed.entries.len and feed.entries[@intCast(idx)].downloads.len > 0) {
+                download.start(feed.entries[@intCast(idx)]);
+                return 1;
+            }
+            // On the start screen: servers can be edited or deleted
             if (feeds.items.len != 1 or idx < 0 or idx >= catalogs.servers.items.len) return 0;
             server_index = @intCast(idx);
             openServerMenu();
@@ -211,7 +252,7 @@ fn listHandler(action: c_int, x: c_int, y: c_int, idx: c_int, state: c_int) call
             _ = pb.SetEventHandler(mainHandler);
 
             var closed = feeds.pop() orelse return 1;
-            closed.arena.deinit();
+            closed.deinit();
 
             // Close the app, if there is no feed left to display
             if (feeds.items.len == 0) {
@@ -226,6 +267,12 @@ fn listHandler(action: c_int, x: c_int, y: c_int, idx: c_int, state: c_int) call
     }
 
     return 1;
+}
+
+/// Called when the sheet of a book is left
+fn sheetClosed() void {
+    _ = pb.SetEventHandler(mainHandler);
+    showList();
 }
 
 fn showList() void {
@@ -318,7 +365,7 @@ fn pickLanguage(index: usize) void {
     applyLanguage();
     // Back to the start screen, in the new language
     var closed = feeds.pop().?;
-    closed.arena.deinit();
+    closed.deinit();
     rebuildCatalogRows() catch {};
     showList();
 }
@@ -502,6 +549,61 @@ fn loadMoreTimer() callconv(.c) void {
         return;
     };
     pb.OpenList(listTitle(), null, pb.ScreenWidth(), item_height, @intCast(feed.entries.len), feed.top, listHandler);
+}
+
+/// The small cover of the entry `index` of `feed`, loaded from the cache. Covers not in the
+/// cache yet are downloaded by a timer, which shows the list again with them.
+fn thumbFor(feed: *Feed, index: usize, entry: xml.Entry, width: c_int, height: c_int) ?*pb.ibitmap {
+    if (feed.thumbs.get(index)) |thumb| return thumb;
+    const url = entry.thumbnail_url orelse entry.cover_url orelse {
+        feed.thumbs.put(gpa, index, null) catch {};
+        return null;
+    };
+    if (!covers.isCached(url)) {
+        if (!thumbs_pending) {
+            thumbs_pending = true;
+            pb.SetWeakTimer("opds-thumbs", @ptrCast(&thumbsTimer), 200);
+        }
+        return null;
+    }
+    const thumb = covers.load(url, width, height);
+    feed.thumbs.put(gpa, index, thumb) catch {};
+    return thumb;
+}
+
+/// Set while covers of the screen wait to be downloaded
+var thumbs_pending = false;
+
+/// Downloads the covers of the rows on screen that are not in the cache yet, then shows the
+/// list again with them
+fn thumbsTimer() callconv(.c) void {
+    thumbs_pending = false;
+    if (feeds.items.len == 0) return;
+    const feed = &feeds.items[feeds.items.len - 1];
+    const online = pb.QueryNetwork() & pb.NET_CONNECTED != 0;
+
+    const rows: usize = @intCast(@divTrunc(pb.ScreenHeight(), item_height) + 1);
+    const first: usize = @intCast(@max(feed.top, 0));
+    const last = @min(first + rows, feed.entries.len);
+    var fetched = false;
+    for (first..last) |index| {
+        if (feed.thumbs.contains(index)) continue;
+        const entry = feed.entries[index];
+        const url = entry.thumbnail_url orelse entry.cover_url orelse continue;
+        if (covers.isCached(url)) continue;
+        if (!online) {
+            feed.thumbs.put(gpa, index, null) catch {};
+            continue;
+        }
+        covers.fetch(url) catch |err| {
+            trace("cover {d} not loaded: {s}\n", .{ index, @errorName(err) });
+            // Not tried again for this list
+            feed.thumbs.put(gpa, index, null) catch {};
+            continue;
+        };
+        fetched = true;
+    }
+    if (fetched) pb.OpenList(listTitle(), null, pb.ScreenWidth(), item_height, @intCast(feed.entries.len), feed.top, listHandler);
 }
 
 pub fn main() void {

@@ -4,7 +4,7 @@ const i18n = @import("i18n.zig");
 
 const Server = @import("server.zig").Server;
 const Catalogs = @import("server.zig").Catalogs;
-const Field = enum { name, url, user, password, calibre_web, timeout, sync };
+const Field = enum { name, url, user, password, calibre_web, timeout, sync, covers };
 
 /// PocketBooks location for storing configuration of applications.
 pub const config_path = "/mnt/ext1/system/config/opds-connector.cfg";
@@ -64,6 +64,7 @@ fn read(allocator: std.mem.Allocator, servers: *std.ArrayList(Server)) !bool {
                 .calibre_web = pb.ReadInt(config, key(&buf, i, .calibre_web), 0) != 0,
                 .timeout = std.math.cast(u16, pb.ReadInt(config, key(&buf, i, .timeout), 0)) orelse 0,
                 .sync = pb.ReadInt(config, key(&buf, i, .sync), 0) != 0,
+                .covers = pb.ReadInt(config, key(&buf, i, .covers), 1) != 0,
             },
         ) catch |err| switch (err) {
             // An invalid entry must not break the whole loading process.
@@ -107,6 +108,12 @@ pub fn store(servers: []const Server) void {
         } else {
             pb.DeleteInt(config, key(&buf, i, .sync));
         }
+        // Covers are shown unless turned off
+        if (server.options.covers) {
+            pb.DeleteInt(config, key(&buf, i, .covers));
+        } else {
+            pb.WriteInt(config, key(&buf, i, .covers), 0);
+        }
         if (server.options.timeout > 0) {
             pb.WriteInt(config, key(&buf, i, .timeout), server.options.timeout);
         } else {
@@ -117,7 +124,7 @@ pub fn store(servers: []const Server) void {
     // A deleted server leaves the entry after the last one behind.
     // We do not want that.
     var buf: [32]u8 = undefined;
-    inline for (.{ Field.name, Field.url, Field.user, Field.password, Field.calibre_web, Field.timeout, Field.sync }) |field| {
+    inline for (.{ Field.name, Field.url, Field.user, Field.password, Field.calibre_web, Field.timeout, Field.sync, Field.covers }) |field| {
         pb.DeleteString(config, key(&buf, servers.len, field));
     }
     pb.WriteInt(config, defaults_key, 1);
