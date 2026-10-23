@@ -4,3 +4,5 @@ export fn curl_easy_setopt() void {}
 export fn curl_easy_perform() void {}
 export fn curl_easy_getinfo() void {}
 export fn curl_easy_cleanup() void {}
+export fn curl_slist_append() void {}
+export fn curl_slist_free_all() void {}

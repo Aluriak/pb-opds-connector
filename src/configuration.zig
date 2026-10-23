@@ -4,7 +4,7 @@ const i18n = @import("i18n.zig");
 
 const Server = @import("server.zig").Server;
 const Catalogs = @import("server.zig").Catalogs;
-const Field = enum { name, url, user, password, calibre_web, timeout, sync, covers };
+const Field = enum { name, url, user, password, calibre_web, timeout, sync, covers, use_http_11 };
 
 /// PocketBooks location for storing configuration of applications.
 pub const config_path = "/mnt/ext1/system/config/opds-connector.cfg";
@@ -65,6 +65,7 @@ fn read(allocator: std.mem.Allocator, servers: *std.ArrayList(Server)) !bool {
                 .timeout = std.math.cast(u16, pb.ReadInt(config, key(&buf, i, .timeout), 0)) orelse 0,
                 .sync = pb.ReadInt(config, key(&buf, i, .sync), 0) != 0,
                 .covers = pb.ReadInt(config, key(&buf, i, .covers), 1) != 0,
+                .use_http_11 = pb.ReadInt(config, key(&buf, i, .use_http_11), 0) != 0,
             },
         ) catch |err| switch (err) {
             // An invalid entry must not break the whole loading process.
@@ -108,6 +109,11 @@ pub fn store(servers: []const Server) void {
         } else {
             pb.DeleteInt(config, key(&buf, i, .sync));
         }
+        if (server.options.use_http_11) {
+            pb.WriteInt(config, key(&buf, i, .use_http_11), 1);
+        } else {
+            pb.DeleteInt(config, key(&buf, i, .use_http_11));
+        }
         // Covers are shown unless turned off
         if (server.options.covers) {
             pb.DeleteInt(config, key(&buf, i, .covers));
@@ -124,7 +130,7 @@ pub fn store(servers: []const Server) void {
     // A deleted server leaves the entry after the last one behind.
     // We do not want that.
     var buf: [32]u8 = undefined;
-    inline for (.{ Field.name, Field.url, Field.user, Field.password, Field.calibre_web, Field.timeout, Field.sync, Field.covers }) |field| {
+    inline for (.{ Field.name, Field.url, Field.user, Field.password, Field.calibre_web, Field.timeout, Field.sync, Field.covers, Field.use_http_11 }) |field| {
         pb.DeleteString(config, key(&buf, servers.len, field));
     }
     pb.WriteInt(config, defaults_key, 1);

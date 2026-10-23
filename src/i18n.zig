@@ -109,6 +109,7 @@ const texts = .{
     .field_calibre_web = .{ "Calibre-Web (send the login right away)", "Calibre-Web (envoyer l'identifiant d'emblée)" },
     .field_timeout = .{ "Connection timeout in seconds (optional)", "Délai de connexion en secondes (facultatif)" },
     .field_sync = .{ "Allow full sync", "Autoriser la synchronisation complète" },
+    .field_http_11 = .{ "Cloudflare (HTTP/1.1, browser-like requests)", "Cloudflare (HTTP/1.1, requêtes de navigateur)" },
     .field_covers = .{ "Show covers", "Afficher les couvertures" },
     .no = .{ "No", "Non" },
     .yes = .{ "Yes", "Oui" },

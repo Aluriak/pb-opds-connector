@@ -39,7 +39,7 @@ An OPDS connector for PocketBook e-readers. Browse catalogs and download books s
 * [**Synchronization:**](#synchronization) Download all books of a list (a Calibre-Web shelf, for example) that are not on the reader yet, in one go.
 * [**Updates:**](#updates) The app can update itself from its GitHub releases, when you ask for it.
 * [**Search:**](#search) Catalogs that offer a search show a "Search" row at the top of each list.
-* **Format selection:** Choose from the formats a catalog offers. A progress bar shows the download.
+* **Format selection:** Choose from the formats a catalog offers: EPUB, PDF, FB2 (also zipped), MOBI, AZW3 and TXT. A progress bar shows the download.
 * **Download handling:** Books are saved to the Downloads folder and show up in the library right away, without a restart.
 
 ## Usage
@@ -72,6 +72,7 @@ Besides the default catalogs you can add your own OPDS servers, for example Cali
 | Calibre-Web | no | Choose "Yes" for Calibre-Web. The login is then sent right away, instead of after a first try without it, which Calibre-Web counts as a failed login (it allows three a minute). |
 | Allow full sync | no | Lists of books of this catalog get a "Synchronize" row, see [Synchronization](#synchronization). |
 | Show covers | yes | Lists of books show the covers the catalog gives. They are downloaded once and kept in `system/cache/opds-connector`, which can be deleted at any time. |
+| Cloudflare | no | For catalogs behind Cloudflare protection: HTTP/1.1 and requests that look like a browser's, as the original app does for every catalog. Stored as `use_http_11`, the name the original app uses. |
 | Connection timeout | no | Seconds to wait for the server to answer the connection, 5 when empty. Raise it for a slow or distant server. |
 
 **What happens to the URL**
@@ -182,8 +183,9 @@ Only firmware 6.x is supported. Anything older is not supported and will not wor
 
 | Firmware | Platform | Devices | Status |
 |---|---|---|---|
-| 6.11 | `allwinner` | Era Lite (PB710) | ✅ Tested |
-| 6.x | `allwinner` | Allwinner B288 models: Era, InkPad 4, InkPad Lite, Verse, Verse Pro, Touch HD 3 | ❔ Untested, expected to work |
+| 6.11 | `allwinner` | Era Lite (PB710), Verse (Pro), Vivlio Touch HD Plus | ✅ Tested (original app) |
+| 6.x | `allwinner` | Vivlio Light HD Color | ✅ Tested (this fork) |
+| 6.x | `allwinner` | Allwinner B288 models: Era, InkPad 4, InkPad Lite, Touch HD 3 | ❔ Untested, expected to work |
 | 6.x | `allwinner` | Allwinner B300 models: Era Color, Verse Pro Color, InkPad Color 2/3, InkPad X Pro | ❔ Untested |
 | 6.11 | `rk3566` | Rockchip RK3566 models: Verta, Verta Color, InkPad One, PocketBook Q | ❔ Untested, expected to work |
 

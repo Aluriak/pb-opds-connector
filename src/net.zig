@@ -6,6 +6,12 @@ const Failure = @import("failure.zig").Failure;
 
 const user_agent = "pb-opds-connector/" ++ @import("build_options").version;
 
+// For catalogs behind Cloudflare, as the original app does: a browser's identity and
+// accepted types, HTTP/1.1 and the common TLS curves (see Server.Options.use_http_11)
+const browser_user_agent = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36";
+const browser_accept = "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8";
+const ec_curves = "X25519:P-256";
+
 /// The server the user is browsing
 var server: ?Server = null;
 
@@ -69,7 +75,18 @@ fn perform(url: [:0]const u8, target: Target) !void {
     defer curl.curl_easy_cleanup(handle);
 
     _ = curl.curl_easy_setopt(handle, curl.CURLOPT_URL, url.ptr);
-    _ = curl.curl_easy_setopt(handle, curl.CURLOPT_USERAGENT, user_agent);
+    const as_browser = if (server) |s| s.options.use_http_11 else false;
+    var headers: ?*curl.curl_slist = null;
+    defer curl.curl_slist_free_all(headers);
+    if (as_browser) {
+        _ = curl.curl_easy_setopt(handle, curl.CURLOPT_USERAGENT, browser_user_agent);
+        headers = curl.curl_slist_append(null, browser_accept);
+        if (headers != null) _ = curl.curl_easy_setopt(handle, curl.CURLOPT_HTTPHEADER, headers);
+        _ = curl.curl_easy_setopt(handle, curl.CURLOPT_HTTP_VERSION, curl.CURL_HTTP_VERSION_1_1);
+        _ = curl.curl_easy_setopt(handle, curl.CURLOPT_SSL_EC_CURVES, ec_curves);
+    } else {
+        _ = curl.curl_easy_setopt(handle, curl.CURLOPT_USERAGENT, user_agent);
+    }
     _ = curl.curl_easy_setopt(handle, curl.CURLOPT_TIMEOUT, @as(c_long, 120));
     const connect_timeout: c_long = if (server) |s| (if (s.options.timeout > 0) s.options.timeout else default_connect_timeout) else default_connect_timeout;
     _ = curl.curl_easy_setopt(handle, curl.CURLOPT_CONNECTTIMEOUT, connect_timeout);

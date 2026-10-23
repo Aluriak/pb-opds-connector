@@ -1,6 +1,6 @@
 .{
     .name = .pb_opds_connector,
-    .version = "0.4.1",
+    .version = "0.4.2",
     .fingerprint = 0x5f18185e8c51a5ea,
     .minimum_zig_version = "0.17.0",
     .dependencies = .{

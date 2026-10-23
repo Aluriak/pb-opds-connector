@@ -33,6 +33,9 @@ pub const Server = struct {
         sync: bool = false,
         /// Lists of books show the covers the catalog gives
         covers: bool = true,
+        /// For catalogs behind Cloudflare: HTTP/1.1, and requests that look like a browser's.
+        /// Named like the option of the original app, which shares the settings file.
+        use_http_11: bool = false,
     };
 
     /// Creates a server from what the user entered. This is the only place the address of a
