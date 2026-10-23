@@ -161,8 +161,9 @@ Install and update the app with the [App Manager](https://github.com/Aluriak/pb-
 follows the stable releases of this repository, or its nightly builds if you choose so. The app
 no longer updates itself.
 
-**Versions of the fork** continue from 0.3.1, the version of the original it started from:
-0.3.2, 0.3.3… They have nothing to do with the versions of the original (0.4.0, 0.5.0…).
+**Versions of the fork** continue from 0.3.1, the version of the original it started from, and
+number the fork only: the fork's 0.4.x are not the original's 0.4.0 (the fork's 0.4.2 holds
+the changes of the original's 0.5.0).
 
 **Publishing a release** (for maintainers): set the new version in `build.zig.zon` and push it to `main`. The build workflow sees that this version has no release yet and publishes one, tagged `v<version>`. Pushing such a tag by hand works too.
 
